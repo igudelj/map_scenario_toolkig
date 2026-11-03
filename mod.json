@@ -1,0 +1,53 @@
+{
+  "dependencies": null,
+  "incompatibilities": null,
+  "modId": "map_scenario_toolkit",
+  "options": null,
+  "params": [
+    {
+      "key": "developerMode",
+      "name": "Developer tools",
+      "tooltip": "Show the scenario developer window and per-town development controls for this save.",
+      "uiType": "ComboBox",
+      "values": [
+        "Off",
+        "On"
+      ],
+      "defaultIndex": 0
+    },
+    {
+      "key": "enableNativeSubsidyOffers",
+      "name": "Native subsidy offers",
+      "tooltip": "Keep the game\u0027s normal random subsidy offers enabled, in addition to scenario subsidy events.",
+      "uiType": "ComboBox",
+      "values": [
+        "Enabled",
+        "Disabled"
+      ],
+      "defaultIndex": 0
+    },
+    {
+      "key": "enableNativeIndustrySpawns",
+      "name": "Native industry spawning",
+      "tooltip": "Keep the game\u0027s normal industry development enabled, in addition to scenario industry events.",
+      "uiType": "ComboBox",
+      "values": [
+        "Enabled",
+        "Disabled"
+      ],
+      "defaultIndex": 0
+    }
+  ],
+  "postRunScript": {
+    "fileName": ""
+  },
+  "preRunScript": {
+    "fileName": "map_scenario_toolkit::/pre_load_config.script@preRunFn"
+  },
+  "revision": 1,
+  "runScript": {
+    "fileName": ""
+  },
+  "severityAdd": "None",
+  "severityRemove": "Warning"
+}

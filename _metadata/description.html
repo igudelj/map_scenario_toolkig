@@ -1,0 +1,19 @@
+﻿<p>MAP SCENARIO TOOLKIT</p>
+<p>A framework for map-authored, event-driven scenarios. It does not include a complete map scenario by itself. Choose one of these workflows.</p>
+
+<p>1. IMPORT JSON FOR A SAVE</p>
+<p>Start or load a game with Map Scenario Toolkit enabled. Click the JSON button in the main game toolbar; it is available when Developer tools is Off. Paste your dataset and click Import pasted events.</p>
+<p>The full example is content/examples/novi_sad_demo_dataset.json inside the toolkit package. It covers date and shipment industry events, subsidy events, and town cargo demand. The file novi_sad_demo_events_compact.json is an industry-only example. The file town_cargo_reference_temperate.json is a lookup list, not an importable dataset.</p>
+<p>Minimal JSON structure: { "industryEvents": [], "subsidyEvents": [], "townConsumptionEvents": [] }</p>
+<p>On PC, examples in a Mod Hub install are under the mod.io storage root at 10640/mods/Mod Hub item ID/content/examples/. The storage root is listed in %LOCALAPPDATA%/mod.io/globalsettings.json. In a development install, look under the Steam userdata staging_area/map_scenario_toolkit/content/examples/ folder.</p>
+
+<p>2. TEST LOCAL LUA DATA</p>
+<p>For a reusable local dataset, make a companion data mod in the game's staging area. A loose Lua file in a map package is not loaded as a mod resource; the dataset needs a resource wrapper.</p>
+<p>Copy content/examples/map_scenario_toolkit_dataset.lua into the companion mod's content folder and edit its industryEvents, subsidyEvents, and townConsumptionEvents arrays. Add a resource wrapper such as scenario_data.res.lua that loads the dataset with ug_require and returns it as a resource of type map_scenario_toolkit_data. List both Lua files in the companion mod's _content.json, give that mod a unique ID, and add a required dependency on map_scenario_toolkit. Enable both mods for your test map.</p>
+
+<p>3. PUBLISH A COMPANION CONTENT MOD</p>
+<p>After testing the Lua dataset, publish the companion mod separately through the in-game Mod Hub. Keep its required dependency on Map Scenario Toolkit. Players enable the map and its data pack; the data pack provides the map-specific rules.</p>
+
+<p>TOOLKIT OPTIONS</p>
+<p>Developer tools is Off by default. Turn it on to show the scenario test window and per-town growth controls. Native subsidy offers and Native industry spawning control the game's normal behavior. These are pre-game options for each save; custom dataset events remain separate.</p>
+<p>This mod focuses on scripted scenario events, not fine-grained in-game management of individual industries, towns, or subsidies. Use dedicated mods for those controls.</p>

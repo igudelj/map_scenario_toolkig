@@ -1,0 +1,131 @@
+{
+    "industryEvents": [
+        {
+            "id": "novi_sad_demo_farm_1940",
+            "fileName": "::/industries/farm/farm.con",
+            "name": "Novi Sad Demo Farm",
+            "trigger": {
+                "type": "date",
+                "date": {
+                    "year": 1940,
+                    "month": 10,
+                    "day": 1
+                }
+            },
+            "location": {
+                "townName": "Novi Sad",
+                "directionWeights": {
+                    "north": 4,
+                    "east": 2,
+                    "south": 1,
+                    "west": 1
+                }
+            },
+            "rotation": "random"
+        },
+        {
+            "id": "novi_sad_livestock_farm_1940",
+            "fileName": "::/industries/livestock_farm/livestock_farm.con",
+            "name": "Novi Sad Livestock Farm",
+            "trigger": {
+                "type": "shipment",
+                "sourceIndustryFileName": "::/industries/farm/farm.con",
+                "sourceIndustryName": "Novi Sad Demo Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumShippedPerYear": 10
+            },
+            "location": {
+                "townName": "Novi Sad",
+                "directionWeights": {
+                    "north": 1,
+                    "east": 4,
+                    "south": 1,
+                    "west": 2
+                }
+            },
+            "rotation": "random"
+        }
+    ],
+    "subsidyEvents": [
+        {
+            "id": "novi_sad_grain_supply_after_farm_spawns",
+            "trigger": {
+                "type": "industrySpawned",
+                "industryEventId": "novi_sad_demo_farm_1940"
+            },
+            "subsidy": {
+                "type": "deliver_cargo",
+                "target": {
+                    "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                    "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                    "nearIndustryEventId": "novi_sad_demo_farm_1940",
+                    "selection": "closest"
+                }
+            }
+        },
+        {
+            "id": "osijek_novi_sad_passenger_subsidy_1940",
+            "trigger": {
+                "type": "date",
+                "date": {
+                    "year": 1940,
+                    "month": 11,
+                    "day": 1
+                }
+            },
+            "subsidy": {
+                "type": "deliver_passengers",
+                "target": {
+                    "sourceTownName": "Osijek",
+                    "targetTownName": "Novi Sad"
+                }
+            }
+        },
+        {
+            "id": "random_livestock_subsidy_after_grain_shipments",
+            "trigger": {
+                "type": "shipment",
+                "sourceIndustryFileName": "::/industries/farm/farm.con",
+                "sourceIndustryName": "Novi Sad Demo Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumShippedPerYear": 10
+            },
+            "subsidy": {
+                "type": "random",
+                "candidates": [
+                    {
+                        "type": "deliver_cargo",
+                        "target": {
+                            "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                            "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                            "selection": "random"
+                        }
+                    },
+                    {
+                        "type": "deliver_workers",
+                        "target": {
+                            "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                            "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                            "selection": "random"
+                        }
+                    }
+                ]
+            }
+        }
+    ],
+    "townConsumptionEvents": [
+        {
+            "townName": "Novi Sad",
+            "consumptionCommercialSlots": [
+                "::/cargos/meat/meat.cargo",
+                "::/cargos/vegetables/vegetables.cargo",
+                "::/cargos/tinned_food/tinned_food.cargo"
+            ],
+            "consumptionIndustrialSlots": [
+                "::/cargos/bricks/bricks.cargo",
+                "::/cargos/planks/planks.cargo",
+                "::/cargos/fuel/fuel.cargo"
+            ]
+        }
+    ]
+}

@@ -1,0 +1,16 @@
+﻿<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Map Scenario Toolkit">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#102638"/><stop offset="1" stop-color="#174755"/></linearGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffd47a"/><stop offset="1" stop-color="#e99a43"/></linearGradient>
+  </defs>
+  <rect x="12" y="12" width="488" height="488" rx="112" fill="url(#bg)"/>
+  <path d="M92 137 208 92l103 41 110-36v264l-111 45-105-42-113 40z" fill="#173c4a" stroke="#79a3a4" stroke-width="8" stroke-linejoin="round"/>
+  <path d="m208 92-3 312M311 133v273M92 267l116-44 103 42 110-43" fill="none" stroke="#356675" stroke-width="6"/>
+  <path d="M136 330c36-15 56-83 112-83s72 62 122 12" fill="none" stroke="url(#gold)" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M136 330c36-15 56-83 112-83s72 62 122 12" fill="none" stroke="#fff1c9" stroke-opacity=".55" stroke-width="4" stroke-dasharray="2 22" stroke-linecap="round"/>
+  <circle cx="136" cy="330" r="25" fill="#f5b650" stroke="#fff1c9" stroke-width="8"/>
+  <circle cx="248" cy="247" r="25" fill="#f5b650" stroke="#fff1c9" stroke-width="8"/>
+  <circle cx="370" cy="259" r="25" fill="#f5b650" stroke="#fff1c9" stroke-width="8"/>
+  <path d="M104 176h55v40h-55zm128 127h45v37h-45zm116-118h49v42h-49z" fill="#eaf0e8" fill-opacity=".92"/>
+  <path d="M111 176v-18h41v18m91 127v-15h28v15m124-118v-20h31v20" fill="none" stroke="#eaf0e8" stroke-width="8" stroke-linejoin="round"/>
+</svg>
