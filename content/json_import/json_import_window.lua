@@ -12,13 +12,17 @@ local importWindow
 local importWindowOpen = false
 local refreshImportToggle
 
-local function makeStyle(props)
-    return styleutil.makeStyle(props or {})
+local function makeStyle(props, padding)
+    local result = styleutil.makeStyle(props or {})
+    if padding then
+        result.padding = api.type.Vec4f.new(padding[1], padding[2], padding[3], padding[4])
+    end
+    return result
 end
 
 local importContent = react.RegisterRecipe('MapScenarioToolkitImportEventsContent', function()
     local jsonText = react.useState('')
-    local status = react.useState('Paste a JSON dataset with industryEvents, subsidyEvents, and townConsumptionEvents arrays.')
+    local status = react.useState('')
 
     local function onImported(dataset)
         actions.sendEvent('developerImportEvents', { dataset = dataset }, 'custom event dataset import')
@@ -46,6 +50,9 @@ local importContent = react.RegisterRecipe('MapScenarioToolkitImportEventsConten
                 text = 'This dataset adds custom events and town cargo-demand overrides to the standard game behavior.',
                 meta = { class = 'font-scale-body' },
             },
+            builtin.TextView {
+                meta = { styleSheet = makeStyle({ size = { 0, 16 } }) },
+            },
             builtin.TextInputField {
                 value = jsonText:old(),
                 placeholderText = 'Paste compact JSON here',
@@ -53,12 +60,19 @@ local importContent = react.RegisterRecipe('MapScenarioToolkitImportEventsConten
                 acceptOnFocusLoss = true,
                 onTyping = function(value) jsonText:set(value) end,
                 onValueChange = function(value) jsonText:set(value) end,
-                meta = { styleSheet = makeStyle({ size = { 540, 36 } }) },
+                meta = { styleSheet = makeStyle({ size = { 540, 72 } }) },
+
+            },
+            builtin.TextView {
+                meta = { styleSheet = makeStyle({ size = { 0, 8 } }) },
             },
             builtin.Button {
                 meta = { class = 'primary', styleSheet = makeStyle({ size = { 220, 28 } }) },
                 content = builtin.TextView { text = 'Import pasted events' },
                 onClick = importPastedEvents,
+            },
+            builtin.TextView {
+                meta = { styleSheet = makeStyle({ size = { 0, 8 } }) },
             },
             builtin.TextView {
                 text = status:old(),
