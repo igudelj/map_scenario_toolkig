@@ -40,7 +40,7 @@ Empty arrays mean that dataset contributes no rules of that kind. They do not tu
 
 ## Constructing the JSON dataset
 
-The full working example is [`content/examples/novi_sad_demo_dataset.json`](content/examples/novi_sad_demo_dataset.json). The Lua starter for a companion map-data mod is [`content/examples/map_scenario_toolkit_dataset.lua`](content/examples/map_scenario_toolkit_dataset.lua). Mod Hub download folders are managed by mod.io and can vary by installation; examples are under `content/examples/` inside the installed toolkit package. It covers date and shipment industry triggers, date/spawn/shipment subsidy triggers, random subsidy selection, and commercial/industrial town demand. [`content/examples/novi_sad_demo_events_compact.json`](content/examples/novi_sad_demo_events_compact.json) is a smaller industry-only example. [`content/examples/town_cargo_reference_temperate.json`](content/examples/town_cargo_reference_temperate.json) is a lookup reference for cargo choices; it is not itself an importable dataset.
+The full working example is [`content/examples/osijek_demo_dataset.json`](content/examples/osijek_demo_dataset.json). The Lua starter for a companion map-data mod is [`content/examples/map_scenario_toolkit_dataset.lua`](content/examples/map_scenario_toolkit_dataset.lua). Mod Hub download folders are managed by mod.io and can vary by installation; examples are under `content/examples/` inside the installed toolkit package. It covers date and shipment industry triggers, date/spawn/shipment subsidy triggers, random subsidy selection, and commercial/industrial town demand. [`content/examples/osijek_demo_events_compact.json`](content/examples/osijek_demo_events_compact.json) is a smaller industry-only example. [`content/examples/town_cargo_reference_temperate.json`](content/examples/town_cargo_reference_temperate.json) is a lookup reference for cargo choices; it is not itself an importable dataset.
 
 ### Industry events
 
@@ -50,7 +50,7 @@ Each `industryEvents` entry accepts:
 - `fileName`: construction resource path, such as `::/industries/farm/farm.con`.
 - `name`: name assigned to the spawned industry.
 - `trigger`: one of the supported trigger objects below.
-- `location` (optional): `{ "townName": "Novi Sad", "directionWeights": { "north": 4, "east": 2, "south": 1, "west": 1 } }`.
+- `location` (optional): `{ "townName": "Osijek", "directionWeights": { "north": 4, "east": 2, "south": 1, "west": 1 } }`.
 - `rotation` (optional): a number of degrees or `"random"`.
 
 Date trigger:
@@ -65,7 +65,7 @@ Shipment trigger:
 "trigger": {
   "type": "shipment",
   "sourceIndustryFileName": "::/industries/farm/farm.con",
-  "sourceIndustryName": "Novi Sad Demo Farm",
+  "sourceIndustryName": "Osijek Demo Farm",
   "cargoTypeFileName": "::/cargos/grain/grain.cargo",
   "minimumShippedPerYear": 10
 }
@@ -85,7 +85,7 @@ Actions use existing game subsidy types: `deliver_cargo`, `deliver_cargo_town`, 
 
 To choose a random action from configured options, use `"type": "random"` and a `candidates` array containing regular subsidy action objects. This randomizes among your listed candidates; it does not replace or customize the game's native subsidy system. The game controls subsidy notification text, so the dataset cannot provide custom messages.
 
-See `subsidyEvents` in the Novi Sad example for complete combinations. An `industrySpawned` subsidy must reference an ID that exists in the same dataset's `industryEvents` array.
+See `subsidyEvents` in the Osijek example for complete combinations. An `industrySpawned` subsidy must reference an ID that exists in the same dataset's `industryEvents` array.
 
 ### Town cargo demand
 
@@ -93,7 +93,7 @@ Each `townConsumptionEvents` entry targets a town by exact `townName` and may pr
 
 ```json
 {
-  "townName": "Novi Sad",
+  "townName": "Osijek",
   "consumptionCommercialSlots": [
     "::/cargos/meat/meat.cargo",
     "::/cargos/vegetables/vegetables.cargo",

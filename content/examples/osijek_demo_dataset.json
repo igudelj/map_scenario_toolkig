@@ -1,9 +1,9 @@
 {
     "industryEvents": [
         {
-            "id": "novi_sad_demo_farm_1940",
+            "id": "osijek_demo_farm_1940",
             "fileName": "::/industries/farm/farm.con",
-            "name": "Novi Sad Demo Farm",
+            "name": "Osijek Demo Farm",
             "trigger": {
                 "type": "date",
                 "date": {
@@ -13,7 +13,7 @@
                 }
             },
             "location": {
-                "townName": "Novi Sad",
+                "townName": "Osijek",
                 "directionWeights": {
                     "north": 4,
                     "east": 2,
@@ -24,18 +24,18 @@
             "rotation": "random"
         },
         {
-            "id": "novi_sad_livestock_farm_1940",
+            "id": "osijek_livestock_farm_1940",
             "fileName": "::/industries/livestock_farm/livestock_farm.con",
-            "name": "Novi Sad Livestock Farm",
+            "name": "Osijek Livestock Farm",
             "trigger": {
                 "type": "shipment",
                 "sourceIndustryFileName": "::/industries/farm/farm.con",
-                "sourceIndustryName": "Novi Sad Demo Farm",
+                "sourceIndustryName": "Osijek Demo Farm",
                 "cargoTypeFileName": "::/cargos/grain/grain.cargo",
                 "minimumShippedPerYear": 10
             },
             "location": {
-                "townName": "Novi Sad",
+                "townName": "Osijek",
                 "directionWeights": {
                     "north": 1,
                     "east": 4,
@@ -48,23 +48,23 @@
     ],
     "subsidyEvents": [
         {
-            "id": "novi_sad_grain_supply_after_farm_spawns",
+            "id": "osijek_grain_supply_after_farm_spawns",
             "trigger": {
                 "type": "industrySpawned",
-                "industryEventId": "novi_sad_demo_farm_1940"
+                "industryEventId": "osijek_demo_farm_1940"
             },
             "subsidy": {
                 "type": "deliver_cargo",
                 "target": {
                     "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
                     "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
-                    "nearIndustryEventId": "novi_sad_demo_farm_1940",
+                    "nearIndustryEventId": "osijek_demo_farm_1940",
                     "selection": "closest"
                 }
             }
         },
         {
-            "id": "osijek_novi_sad_passenger_subsidy_1940",
+            "id": "osijek_osijek_passenger_subsidy_1940",
             "trigger": {
                 "type": "date",
                 "date": {
@@ -77,7 +77,7 @@
                 "type": "deliver_passengers",
                 "target": {
                     "sourceTownName": "Osijek",
-                    "targetTownName": "Novi Sad"
+                    "targetTownName": "Osijek"
                 }
             }
         },
@@ -86,7 +86,7 @@
             "trigger": {
                 "type": "shipment",
                 "sourceIndustryFileName": "::/industries/farm/farm.con",
-                "sourceIndustryName": "Novi Sad Demo Farm",
+                "sourceIndustryName": "Osijek Demo Farm",
                 "cargoTypeFileName": "::/cargos/grain/grain.cargo",
                 "minimumShippedPerYear": 10
             },
@@ -115,7 +115,7 @@
     ],
     "townConsumptionEvents": [
         {
-            "townName": "Novi Sad",
+            "townName": "Osijek",
             "consumptionCommercialSlots": [
                 "::/cargos/meat/meat.cargo",
                 "::/cargos/vegetables/vegetables.cargo",
