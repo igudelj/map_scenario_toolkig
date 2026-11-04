@@ -77,7 +77,7 @@
                 "type": "deliver_passengers",
                 "target": {
                     "sourceTownName": "Osijek",
-                    "targetTownName": "Osijek"
+                    "targetTownName": "Novi Sad"
                 }
             }
         },
