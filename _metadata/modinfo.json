@@ -5,12 +5,9 @@
                         "role":  "CREATOR"
                     }
                 ],
-    "description":  "A reusable framework for map-specific industry, subsidy, and town cargo-demand events. Import JSON for a save, test local Lua data, or publish a companion scenario mod.",
     "name":  "Map Scenario Toolkit",
     "summary":  "Use map-authored scenario events through JSON, local Lua data, or companion content mods.",
     "tags":  [
-                 "Script Mod",
-                 "Developer Tools"
-             ],
-    "url":  ""
+                 "Script Mod"
+             ]
 }

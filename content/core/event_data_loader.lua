@@ -174,6 +174,10 @@ local function makeDataset(industryEvents, subsidyEvents, townConsumptionEvents)
 end
 
 local function loadEventData()
+    if not api.res then
+        return makeDataset({}, {}, {})
+    end
+
     local customResourceIds = api.res.genericRep.getAllOfType(mapDataResourceType)
     if #customResourceIds == 0 then
         log.message("No map event dataset is registered; no bundled industry spawns are configured")
@@ -211,8 +215,6 @@ local loadedData = loadEventData()
 loadedData.validate = validateEventData
 loadedData.validateDataset = validateDataset
 return loadedData
-
-
 
 
 
