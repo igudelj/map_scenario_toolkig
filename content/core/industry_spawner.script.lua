@@ -90,36 +90,43 @@ local function getCargoTypeId(cargoTypeFileName)
     return cargoTypeId
 end
 
-local function getIndustryShipments(trigger)
+local function getIndustryCargoFlow(trigger)
     local cargoTypeId = getCargoTypeId(trigger.cargoTypeFileName)
     if not cargoTypeId then
         return nil
     end
 
-    local shippedPerYear
+    local industryFileName = trigger.industryFileName or trigger.sourceIndustryFileName
+    local industryName = trigger.industryName or trigger.sourceIndustryName
+    local cargoPerYear
     api.engine.forEachEntityWithComponent(function(entity)
-        if shippedPerYear ~= nil then
+        if cargoPerYear ~= nil then
             return
         end
 
         local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
-        local construction = api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
-        if not construction or construction.fileName ~= trigger.sourceIndustryFileName then
+        local construction = industry
+            and api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+        if not construction or construction.fileName ~= industryFileName then
             return
         end
 
         local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
-        if not name or name.name ~= trigger.sourceIndustryName then
+        if not name or name.name ~= industryName then
             name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
         end
-        if not name or name.name ~= trigger.sourceIndustryName then
+        if not name or name.name ~= industryName then
             return
         end
 
-        shippedPerYear = api.engine.util.stock.getCargoTypeShippedPerYear(industry.stockList, cargoTypeId)
+        if (trigger.direction or "shipped") == "delivered" then
+            cargoPerYear = api.engine.util.stock.getCargoTypeDeliveredPerYear(industry.stockList, cargoTypeId)
+        else
+            cargoPerYear = api.engine.util.stock.getCargoTypeShippedPerYear(industry.stockList, cargoTypeId)
+        end
     end, api.type.ComponentType.INDUSTRY)
 
-    return shippedPerYear
+    return cargoPerYear
 end
 
 local function isDue(spawn, currentDate, currentTimeOfDaySec)
@@ -138,8 +145,12 @@ local function isDue(spawn, currentDate, currentTimeOfDaySec)
 
         return true
     elseif trigger.type == "shipment" then
-        local shippedPerYear = getIndustryShipments(trigger)
-        return shippedPerYear ~= nil and shippedPerYear >= trigger.minimumShippedPerYear
+        local cargoPerYear = getIndustryCargoFlow(trigger)
+        local minimumPerYear = trigger.minimumShippedPerYear
+        if trigger.direction == "delivered" then
+            minimumPerYear = trigger.minimumDeliveredPerYear
+        end
+        return cargoPerYear ~= nil and cargoPerYear >= minimumPerYear
     end
 
     log.error("Unknown industry spawn trigger type; id = " .. spawn.id .. ", type = " .. tostring(trigger.type))
@@ -1072,8 +1083,6 @@ end
 function data()
     return industrySpawner
 end
-
-
 
 
 

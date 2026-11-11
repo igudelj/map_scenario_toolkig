@@ -71,7 +71,20 @@ Shipment trigger:
 }
 ```
 
-The source construction path, source industry name, cargo path, and threshold must all match a real source and its shipments. A shipment-triggered event waits until the configured annual amount is reached.
+This legacy form checks cargo shipped out and remains supported. New triggers may use `industryFileName` and `industryName` instead of `sourceIndustryFileName` and `sourceIndustryName`. The direction defaults to `"shipped"`; set it to `"delivered"` to check cargo arriving at the matched industry:
+
+```json
+"trigger": {
+  "type": "shipment",
+  "direction": "delivered",
+  "industryFileName": "::/industries/livestock_farm/livestock_farm.con",
+  "industryName": "Osijek Livestock Farm",
+  "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+  "minimumDeliveredPerYear": 10
+}
+```
+
+The construction path, industry name, cargo path, and direction-specific threshold must match a real industry and cargo. Shipped triggers use `minimumShippedPerYear`; delivered triggers use `minimumDeliveredPerYear`. Either trigger waits until the configured annual cargo flow is reached.
 
 ### Subsidy events
 
@@ -79,7 +92,7 @@ Each `subsidyEvents` entry has a unique `id`, a `trigger`, and a `subsidy` actio
 
 - `date`: same date object as above.
 - `industrySpawned`: `{ "type": "industrySpawned", "industryEventId": "event_id" }`.
-- `shipment`: same source/cargo/annual threshold fields as the industry shipment trigger.
+- `shipment`: same direction, industry, cargo, and annual threshold fields as the industry shipment trigger.
 
 Actions use existing game subsidy types: `deliver_cargo`, `deliver_cargo_town`, `deliver_passengers`, or `deliver_workers`. For industry targets, configure the target construction and any required cargo. `selection` can be `closest` or `random`; `nearIndustryEventId` can select a spawned event as the distance reference. Passenger routes use `sourceTownName` and `targetTownName`; town cargo subsidies use `townName` and `cargoTypeFileName`.
 

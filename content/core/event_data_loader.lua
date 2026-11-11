@@ -80,23 +80,33 @@ local function validateEventData(eventData, source, allowEmpty)
                     invalid(index, "timeOfDaySec must be between 0 and 86399")
                 end
             elseif trigger.type == "shipment" then
-                if type(trigger.sourceIndustryFileName) ~= "string"
-                    or trigger.sourceIndustryFileName == "" then
-                    invalid(index, "shipment trigger requires sourceIndustryFileName")
-                elseif api.res.constructionRep.find(trigger.sourceIndustryFileName) < 0 then
-                    invalid(index, "source industry construction not found: " .. trigger.sourceIndustryFileName)
+                local direction = trigger.direction or "shipped"
+                if direction ~= "shipped" and direction ~= "delivered" then
+                    invalid(index, "shipment direction must be 'shipped' or 'delivered'")
                 end
-                if type(trigger.sourceIndustryName) ~= "string" or trigger.sourceIndustryName == "" then
-                    invalid(index, "shipment trigger requires sourceIndustryName")
+                local industryFileName = trigger.industryFileName or trigger.sourceIndustryFileName
+                local industryName = trigger.industryName or trigger.sourceIndustryName
+                if type(industryFileName) ~= "string" or industryFileName == "" then
+                    invalid(index, "shipment trigger requires industryFileName")
+                elseif api.res.constructionRep.find(industryFileName) < 0 then
+                    invalid(index, "shipment industry construction not found: " .. industryFileName)
+                end
+                if type(industryName) ~= "string" or industryName == "" then
+                    invalid(index, "shipment trigger requires industryName")
                 end
                 if type(trigger.cargoTypeFileName) ~= "string" or trigger.cargoTypeFileName == "" then
                     invalid(index, "shipment trigger requires cargoTypeFileName")
                 elseif api.res.cargoTypeRep.find(trigger.cargoTypeFileName) < 0 then
                     invalid(index, "cargo resource not found: " .. trigger.cargoTypeFileName)
                 end
-                if not isFiniteNumber(trigger.minimumShippedPerYear)
-                    or trigger.minimumShippedPerYear < 0 then
-                    invalid(index, "minimumShippedPerYear must be a non-negative number")
+                local minimumPerYear = trigger.minimumShippedPerYear
+                local minimumField = "minimumShippedPerYear"
+                if direction == "delivered" then
+                    minimumPerYear = trigger.minimumDeliveredPerYear
+                    minimumField = "minimumDeliveredPerYear"
+                end
+                if not isFiniteNumber(minimumPerYear) or minimumPerYear < 0 then
+                    invalid(index, minimumField .. " must be a non-negative number")
                 end
             else
                 invalid(index, "trigger.type must be 'date' or 'shipment'")
@@ -215,8 +225,6 @@ local loadedData = loadEventData()
 loadedData.validate = validateEventData
 loadedData.validateDataset = validateDataset
 return loadedData
-
-
 
 
 

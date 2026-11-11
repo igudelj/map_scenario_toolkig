@@ -102,18 +102,33 @@ function M.validate(events, source)
                     invalid(i, "industrySpawned trigger requires industryEventId")
                 end
             elseif trigger.type == "shipment" then
-                if type(trigger.sourceIndustryFileName) ~= "string" or trigger.sourceIndustryFileName == ""
-                    or type(trigger.sourceIndustryName) ~= "string" or trigger.sourceIndustryName == ""
-                    or type(trigger.cargoTypeFileName) ~= "string" or trigger.cargoTypeFileName == ""
-                    or not isFiniteNumber(trigger.minimumShippedPerYear) or trigger.minimumShippedPerYear < 0 then
-                    invalid(i, "shipment trigger requires source industry, cargo, and non-negative minimumShippedPerYear")
-                else
-                    if api.res.constructionRep.find(trigger.sourceIndustryFileName) < 0 then
-                        invalid(i, "shipment source construction not found: " .. trigger.sourceIndustryFileName)
-                    end
-                    if api.res.cargoTypeRep.find(trigger.cargoTypeFileName) < 0 then
-                        invalid(i, "shipment cargo not found: " .. trigger.cargoTypeFileName)
-                    end
+                local direction = trigger.direction or "shipped"
+                if direction ~= "shipped" and direction ~= "delivered" then
+                    invalid(i, "shipment direction must be shipped or delivered")
+                end
+                local industryFileName = trigger.industryFileName or trigger.sourceIndustryFileName
+                local industryName = trigger.industryName or trigger.sourceIndustryName
+                if type(industryFileName) ~= "string" or industryFileName == "" then
+                    invalid(i, "shipment trigger requires industryFileName")
+                elseif api.res.constructionRep.find(industryFileName) < 0 then
+                    invalid(i, "shipment industry construction not found: " .. industryFileName)
+                end
+                if type(industryName) ~= "string" or industryName == "" then
+                    invalid(i, "shipment trigger requires industryName")
+                end
+                if type(trigger.cargoTypeFileName) ~= "string" or trigger.cargoTypeFileName == "" then
+                    invalid(i, "shipment trigger requires cargoTypeFileName")
+                elseif api.res.cargoTypeRep.find(trigger.cargoTypeFileName) < 0 then
+                    invalid(i, "shipment cargo not found: " .. trigger.cargoTypeFileName)
+                end
+                local minimumPerYear = trigger.minimumShippedPerYear
+                if direction == "delivered" then
+                    minimumPerYear = trigger.minimumDeliveredPerYear
+                end
+                if not isFiniteNumber(minimumPerYear) or minimumPerYear < 0 then
+                    local field = direction == "delivered"
+                        and "minimumDeliveredPerYear" or "minimumShippedPerYear"
+                    invalid(i, field .. " must be a non-negative number")
                 end
             else
                 invalid(i, "trigger.type must be date, industrySpawned, or shipment")
@@ -256,17 +271,28 @@ end
 local function shipmentReached(trigger)
     local cargoTypeId = api.res.cargoTypeRep.find(trigger.cargoTypeFileName)
     if cargoTypeId < 0 then return false end
+    local industryFileName = trigger.industryFileName or trigger.sourceIndustryFileName
+    local industryName = trigger.industryName or trigger.sourceIndustryName
+    local minimumPerYear = trigger.minimumShippedPerYear
+    if trigger.direction == "delivered" then
+        minimumPerYear = trigger.minimumDeliveredPerYear
+    end
     local reached = false
     api.engine.forEachEntityWithComponent(function(entity)
         if reached then return end
         local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
         local construction = industry and api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
-        if not construction or construction.fileName ~= trigger.sourceIndustryFileName then return end
+        if not construction or construction.fileName ~= industryFileName then return end
         local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
             or api.engine.getComponent(entity, api.type.ComponentType.NAME)
-        if not name or name.name ~= trigger.sourceIndustryName then return end
-        reached = api.engine.util.stock.getCargoTypeShippedPerYear(industry.stockList, cargoTypeId)
-            >= trigger.minimumShippedPerYear
+        if not name or name.name ~= industryName then return end
+        local cargoPerYear
+        if (trigger.direction or "shipped") == "delivered" then
+            cargoPerYear = api.engine.util.stock.getCargoTypeDeliveredPerYear(industry.stockList, cargoTypeId)
+        else
+            cargoPerYear = api.engine.util.stock.getCargoTypeShippedPerYear(industry.stockList, cargoTypeId)
+        end
+        reached = cargoPerYear >= minimumPerYear
     end, api.type.ComponentType.INDUSTRY)
     return reached
 end
@@ -294,8 +320,6 @@ function M.update(events, state, currentDate, currentTimeOfDaySec)
 end
 
 return M
-
-
 
 
 

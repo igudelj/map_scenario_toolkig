@@ -111,6 +111,25 @@
                     }
                 ]
             }
+        },
+        {
+            "id": "livestock_subsidy_after_grain_deliveries",
+            "trigger": {
+                "type": "shipment",
+                "direction": "delivered",
+                "industryFileName": "::/industries/livestock_farm/livestock_farm.con",
+                "industryName": "Osijek Livestock Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumDeliveredPerYear": 10
+            },
+            "subsidy": {
+                "type": "deliver_cargo",
+                "target": {
+                    "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                    "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                    "selection": "closest"
+                }
+            }
         }
     ],
     "townConsumptionEvents": [
