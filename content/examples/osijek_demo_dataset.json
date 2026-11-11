@@ -44,6 +44,29 @@
                 }
             },
             "rotation": "random"
+        },
+        {
+            "id": "osijek_tool_factory_after_grain_deliveries",
+            "fileName": "::/industries/tool_factory/tool_factory.con",
+            "name": "Osijek Tool Factory",
+            "trigger": {
+                "type": "shipment",
+                "direction": "delivered",
+                "industryFileName": "::/industries/livestock_farm/livestock_farm.con",
+                "industryName": "Osijek Livestock Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumDeliveredPerYear": 10
+            },
+            "location": {
+                "townName": "Osijek",
+                "directionWeights": {
+                    "north": 2,
+                    "east": 3,
+                    "south": 1,
+                    "west": 1
+                }
+            },
+            "rotation": "random"
         }
     ],
     "subsidyEvents": [
