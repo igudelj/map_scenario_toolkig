@@ -9,13 +9,15 @@ local industries = {
         climates = { "temperate", "dry", "subarctic" },
         inputs = { "Grain", "Glass" },
         outputs = { "Beverages" },
+        placement = "land",
     },
     brick_works = {
         name = "Brick Works",
-        filename = "::/industries/brick_works/brick_works.con",
+        filename = "::/industries/bricks_works/bricks_works.con",
         climates = { "temperate", "dry" },
         inputs = { "Clay" },
         outputs = { "Bricks" },
+        placement = "land",
     },
     cement_plant = {
         name = "Cement Plant",
@@ -23,6 +25,7 @@ local industries = {
         climates = { "tropical", "subarctic" },
         inputs = { "Stone" },
         outputs = { "Cement" },
+        placement = "land",
     },
     chemical_plant = {
         name = "Chemical Plant",
@@ -30,6 +33,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Chemicals" },
         outputs = { "Dyes", "Plastic" },
+        placement = "land",
     },
     clay_pit = {
         name = "Clay Pit",
@@ -38,6 +42,7 @@ local industries = {
         inputs = {},
         outputs = { "Clay" },
         booster = "Tools",
+        placement = "land",
     },
     coal_mine = {
         name = "Coal Mine",
@@ -46,6 +51,7 @@ local industries = {
         inputs = {},
         outputs = { "Coal" },
         booster = "Tools",
+        placement = "land",
     },
     cotton_farm = {
         name = "Cotton Farm",
@@ -54,6 +60,7 @@ local industries = {
         inputs = {},
         outputs = { "Wool" },
         booster = "Fertilizer",
+        placement = "land",
     },
     crop_farm = {
         name = "Crop Farm",
@@ -62,6 +69,7 @@ local industries = {
         inputs = {},
         outputs = { "Grain", "Vegetables" },
         booster = "Fertilizer",
+        placement = "land",
     },
     fishing_grounds = {
         name = "Fishing Grounds",
@@ -70,6 +78,7 @@ local industries = {
         inputs = {},
         outputs = { "Fish" },
         booster = "Tools",
+        placement = "water",
     },
     canning_factory = {
         name = "Canning Factory",
@@ -77,6 +86,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Fish or Meat", "Sheet Metal" },
         outputs = { "Canned Food" },
+        placement = "land",
     },
     furniture_factory = {
         name = "Furniture Factory",
@@ -85,6 +95,7 @@ local industries = {
         inputs = { "Planks", "Glass" },
         outputs = { "Furniture" },
         booster = "Machines",
+        placement = "land",
     },
     glass_works = {
         name = "Glass Works",
@@ -92,6 +103,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Sand" },
         outputs = { "Glass" },
+        placement = "land",
     },
     iron_ore_mine = {
         name = "Iron Ore Mine",
@@ -99,6 +111,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = {},
         outputs = { "Iron Ore" },
+        placement = "land",
     },
     livestock_farm = {
         name = "Livestock Farm",
@@ -107,6 +120,7 @@ local industries = {
         inputs = { "Grain" },
         outputs = { "Meat", "Wool" },
         booster = "Machines",
+        placement = "land",
     },
     logging_camp = {
         name = "Logging Camp",
@@ -114,6 +128,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = {},
         outputs = { "Logs" },
+        placement = "land",
     },
     machine_factory = {
         name = "Machine Factory",
@@ -121,6 +136,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Steel", "Plastic" },
         outputs = { "Machines" },
+        placement = "land",
     },
     oil_platform = {
         name = "Oil Platform",
@@ -129,6 +145,7 @@ local industries = {
         inputs = {},
         outputs = { "Crude Oil" },
         booster = "Tools",
+        placement = "water",
     },
     oil_refinery = {
         name = "Oil Refinery",
@@ -136,6 +153,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Crude Oil" },
         outputs = { "Fuel", "Fertilizer", "Chemicals" },
+        placement = "land",
     },
     oil_well = {
         name = "Oil Well",
@@ -144,6 +162,7 @@ local industries = {
         inputs = {},
         outputs = { "Crude Oil" },
         booster = "Machines",
+        placement = "land",
     },
     paper_mill = {
         name = "Paper Mill",
@@ -151,6 +170,7 @@ local industries = {
         climates = { "subarctic" },
         inputs = { "Sawdust" },
         outputs = { "Paper" },
+        placement = "land",
     },
     printing_press = {
         name = "Printing Press",
@@ -158,6 +178,7 @@ local industries = {
         climates = { "subarctic" },
         inputs = { "Paper", "Dyes" },
         outputs = { "Books" },
+        placement = "land",
     },
     quarry = {
         name = "Quarry",
@@ -166,6 +187,7 @@ local industries = {
         inputs = {},
         outputs = { "Stone" },
         booster = "Tools",
+        placement = "land",
     },
     rubber_farm = {
         name = "Rubber Farm",
@@ -174,6 +196,7 @@ local industries = {
         inputs = {},
         outputs = { "Rubber" },
         booster = "Fertilizer",
+        placement = "land",
     },
     sand_excavator = {
         name = "Sand Excavator",
@@ -182,6 +205,7 @@ local industries = {
         inputs = {},
         outputs = { "Sand" },
         booster = "Machines",
+        placement = "water",
     },
     sand_pit = {
         name = "Sand Pit",
@@ -190,6 +214,7 @@ local industries = {
         inputs = {},
         outputs = { "Sand" },
         booster = "Tools",
+        placement = "land",
     },
     saw_mill = {
         name = "Saw Mill",
@@ -197,6 +222,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Logs" },
         outputs = { "Sawdust", "Planks" },
+        placement = "land",
     },
     steel_mill = {
         name = "Steel Mill",
@@ -204,6 +230,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Iron Ore", "Coal" },
         outputs = { "Sheet Metal", "Steel" },
+        placement = "land",
     },
     textile_factory = {
         name = "Textile Factory",
@@ -211,6 +238,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Fabric", "Dyes" },
         outputs = { "Clothes" },
+        placement = "land",
     },
     tire_factory = {
         name = "Tire Factory",
@@ -218,6 +246,7 @@ local industries = {
         climates = { "tropical" },
         inputs = { "Rubber" },
         outputs = { "Tires" },
+        placement = "land",
     },
     tool_factory = {
         name = "Tool Factory",
@@ -225,6 +254,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Planks", "Plastic" },
         outputs = { "Tools" },
+        placement = "land",
     },
     vehicle_factory = {
         name = "Vehicle Factory",
@@ -232,6 +262,7 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Tires", "Sheet Metal", "Machines" },
         outputs = { "Vehicles" },
+        placement = "land",
     },
     weaving_mill = {
         name = "Weaving Mill",
@@ -239,11 +270,21 @@ local industries = {
         climates = { "temperate", "dry", "tropical", "subarctic" },
         inputs = { "Wool" },
         outputs = { "Fabric" },
+        placement = "land",
     },
 }
 
 local function getIndustry(key)
     return industries[key]
+end
+
+local function getIndustryByFilename(filename)
+    for _, industry in pairs(industries) do
+        if industry.filename == filename then
+            return industry
+        end
+    end
+    return nil
 end
 
 local function listIndustries()
@@ -258,5 +299,6 @@ end
 return {
     industries = industries,
     getIndustry = getIndustry,
+    getIndustryByFilename = getIndustryByFilename,
     listIndustries = listIndustries,
 }

@@ -116,25 +116,49 @@ local function validateEventData(eventData, source, allowEmpty)
                 if type(event.location) ~= "table"
                     or type(event.location.townName) ~= "string" or event.location.townName == "" then
                     invalid(index, "location requires a non-empty townName")
-                elseif event.location.directionWeights ~= nil then
-                    local weights = event.location.directionWeights
-                    local total = 0
-                    if type(weights) ~= "table" then
-                        invalid(index, "directionWeights must be a table")
-                    else
-                        for _, direction in ipairs({ "north", "east", "south", "west" }) do
-                            local weight = weights[direction]
-                            if weight == nil then
-                                weight = 0
+                else
+                    if event.location.directionWeights ~= nil then
+                        local weights = event.location.directionWeights
+                        local total = 0
+                        if type(weights) ~= "table" then
+                            invalid(index, "directionWeights must be a table")
+                        else
+                            for _, direction in ipairs({ "north", "east", "south", "west" }) do
+                                local weight = weights[direction]
+                                if weight == nil then
+                                    weight = 0
+                                end
+                                if not isFiniteNumber(weight) or weight < 0 then
+                                    invalid(index, "directionWeights must contain non-negative numbers")
+                                    break
+                                end
+                                total = total + weight
                             end
-                            if not isFiniteNumber(weight) or weight < 0 then
-                                invalid(index, "directionWeights must contain non-negative numbers")
-                                break
+                            if total <= 0 then
+                                invalid(index, "directionWeights must have a positive total")
                             end
-                            total = total + weight
                         end
-                        if total <= 0 then
-                            invalid(index, "directionWeights must have a positive total")
+                    end
+
+                    if event.location.distanceWeights ~= nil then
+                        local weights = event.location.distanceWeights
+                        if type(weights) ~= "table" then
+                            invalid(index, "distanceWeights must be a table")
+                        else
+                            local hasWeight = false
+                            for _, direction in ipairs({ "north", "east", "south", "west" }) do
+                                local weight = weights[direction]
+                                if weight ~= nil then
+                                    hasWeight = true
+                                    if not isInteger(weight) or weight < 1 or weight > 10 then
+                                        invalid(index, "distanceWeights must contain integers from 1 to 10")
+                                        break
+                                    end
+                                end
+                            end
+                            if not hasWeight then
+                                invalid(index, "distanceWeights must configure at least one direction")
+                            end
                         end
                     end
                 end

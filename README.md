@@ -18,7 +18,7 @@ Turning off native subsidies sets the game's subsidy mode to off. Turning off na
 
 ### Enable developer tools for local development
 
-Before starting or loading the map, open Map Scenario Toolkit's settings in the mod options and set **Developer tools** to **On**. The controls are available for that save; switch the option back to **Off** for normal play. No Lua source edit is needed. The setting is also available to players, so leave its default off in the published mod.
+Before starting or loading the map, open Map Scenario Toolkit's settings in the mod options and set **Developer tools** to **On**. The controls are available for that save; switch the option back to **Off** for normal play. No Lua source edit is needed. The developer window can force configured events for testing. All industry event spawns use the game's map-editor industry proposal path, including automatic date- or shipment-triggered events. The setting is also available to players, so leave its default off in the published mod.
 ## Dataset formats
 
 A dataset can be supplied in either of two ways:
@@ -50,7 +50,19 @@ Each `industryEvents` entry accepts:
 - `fileName`: construction resource path, such as `::/industries/farm/farm.con`.
 - `name`: name assigned to the spawned industry.
 - `trigger`: one of the supported trigger objects below.
-- `location` (optional): `{ "townName": "Osijek", "directionWeights": { "north": 4, "east": 2, "south": 1, "west": 1 } }`.
+- `location` (optional): a town and optional direction/distance preferences:
+
+  ```json
+  {
+    "townName": "Osijek",
+    "directionWeights": { "north": 4, "east": 2, "south": 1, "west": 1 },
+    "distanceWeights": { "north": 5, "east": 5, "south": 1, "west": 1 }
+  }
+  ```
+
+  `directionWeights` controls which compass direction is preferred. Optional `distanceWeights` gives each configured direction a preferred distance level from 1 to 10. Level 1 prefers positions within 350 m of town center; levels 2–10 target 250 m increments with a 100 m tolerance on either side (for example, level 5 targets 1,250 ± 100 m). Level 10 is clipped to the 2,500 m cutoff. A direction's sampled valid positions in its preferred band are tried first; other sampled positions in that direction remain as fallbacks. Directions omitted from `distanceWeights`, or locations without it, keep the existing random-distance behavior.
+
+  For vanilla industries listed in the toolkit catalog, placement is filtered by its `placement` metadata (`"land"` or `"water"`) using the game's water query. All placements use the game's map-editor industry proposal path, passing the construction placement tag and the `onWater` flag. Water placements are sampled within 2,500 m of the town center and require water at the candidate and at eight points 200 m around it, keeping them offshore from the shoreline. They do not require nearby road nodes and are excluded from automatic and developer-triggered road repairs; because the game's road command affects every industry assigned to a town, repair commands are also skipped for towns containing a catalogued water industry. Land placements elsewhere retain the existing town-area and road filters. Uncatalogued construction filenames have no placement filter.
 - `rotation` (optional): a number of degrees or `"random"`.
 
 Date trigger:

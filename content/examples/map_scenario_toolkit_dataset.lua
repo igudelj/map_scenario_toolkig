@@ -12,6 +12,7 @@ return {
             location = {
                 townName = "Osijek",
                 directionWeights = { north = 4, east = 2, south = 1, west = 1 },
+                distanceWeights = { north = 5, east = 5, south = 1, west = 1 },
             },
             rotation = "random",
         },
