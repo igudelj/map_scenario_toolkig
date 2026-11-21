@@ -17,6 +17,7 @@
                   "mod.script.lua",
                   "utils/industry_catalog.lua",
                   "utils/industry_helpers.lua",
+                  "utils/goods_catalog.lua",
                   "utils/json_decode.lua",
                   "json_import/json_import.res.lua",
                   "json_import/json_import_window.css.lua",

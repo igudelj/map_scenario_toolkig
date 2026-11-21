@@ -1,0 +1,88 @@
+{
+  "referenceName": "Vanilla town cargo demand reference",
+  "economy": "Temperate",
+  "scope": "Default cargo categories and town growth demand rules for the Temperate economy. Other economies may differ.",
+  "sourceFiles": [
+    "base/content/economy/placementparamsutil.lua",
+    "base/content/economy/temperate.eco.lua",
+    "base/content/game_mechanics/towns/town_growth.script.tl"
+  ],
+  "demandRulesByLevel": [
+    {
+      "level": 0,
+      "district": "COMMERCIAL",
+      "preferredTierRange": [0, 1],
+      "districtDemandCountAfterLevel": 1
+    },
+    {
+      "level": 0,
+      "district": "INDUSTRIAL",
+      "preferredTierRange": [0, 1],
+      "districtDemandCountAfterLevel": 1
+    },
+    {
+      "level": 5,
+      "district": "COMMERCIAL",
+      "preferredTierRange": [0, 1],
+      "districtDemandCountAfterLevel": 2
+    },
+    {
+      "level": 7,
+      "district": "INDUSTRIAL",
+      "preferredTierRange": [0, 1],
+      "districtDemandCountAfterLevel": 2
+    },
+    {
+      "level": 9,
+      "district": "COMMERCIAL",
+      "preferredTierRange": [0, 2],
+      "districtDemandCountAfterLevel": 3
+    },
+    {
+      "level": 11,
+      "district": "INDUSTRIAL",
+      "preferredTierRange": [0, 2],
+      "districtDemandCountAfterLevel": 3
+    }
+  ],
+  "cargoByName": {
+    "beverages": { "tier": 1, "districts": ["COMMERCIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["brewery"] },
+    "bricks": { "tier": 0, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["bricks_works"] },
+    "clothes": { "tier": 1, "districts": ["COMMERCIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["textile_factory"] },
+    "fish": { "tier": 0, "districts": ["COMMERCIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["fishing_grounds"] },
+    "fuel": { "tier": 0, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["oil_refinery"] },
+    "furniture": { "tier": 1, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["furniture_factory"] },
+    "machines": { "tier": 1, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["machine_factory"] },
+    "meat": { "tier": 0, "districts": ["COMMERCIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["livestock_farm"] },
+    "planks": { "tier": 0, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["saw_mill"] },
+    "tinned_food": { "tier": 1, "districts": ["COMMERCIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["food_factory"] },
+    "tools": { "tier": 1, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 0.5, "requiredIndustryTags": ["tool_factory"] },
+    "vegetables": { "tier": 0, "districts": ["COMMERCIAL"], "townConsumptionFactor": 1, "requiredIndustryTags": ["farm"] },
+    "vehicles": { "tier": 2, "districts": ["INDUSTRIAL"], "townConsumptionFactor": 0.25, "requiredIndustryTags": ["vehicle_factory"] }
+  },
+  "cargoByTier": {
+    "0": {
+      "COMMERCIAL": ["fish", "meat", "vegetables"],
+      "INDUSTRIAL": ["bricks", "fuel", "planks"]
+    },
+    "1": {
+      "COMMERCIAL": ["beverages", "clothes", "tinned_food"],
+      "INDUSTRIAL": ["furniture", "machines", "tools"]
+    },
+    "2": {
+      "COMMERCIAL": [],
+      "INDUSTRIAL": ["vehicles"]
+    }
+  },
+  "cargoByDistrict": {
+    "COMMERCIAL": ["beverages", "clothes", "fish", "meat", "tinned_food", "vegetables"],
+    "INDUSTRIAL": ["bricks", "fuel", "furniture", "machines", "planks", "tools", "vehicles"]
+  },
+  "selectionNotes": [
+    "Demand slots are added at the listed town levels after the town has received cargo at least once.",
+    "Tier ranges are preferences, not strict filters: the growth script gives an out-of-range candidate a much lower tier weight rather than removing it.",
+    "The script considers available cargo types whose economy category supports the district. It avoids cargo already demanded by that town and favors cargo that is less common among towns in that district.",
+    "The listed townConsumptionFactor is the economy category setting; it affects town consumption, not which district is eligible to demand the cargo.",
+    "The Temperate economy removes some default categories, including books, cement, paper, rubber, and tires; they are therefore omitted here."
+  ]
+}

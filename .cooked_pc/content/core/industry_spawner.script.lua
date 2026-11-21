@@ -1,0 +1,1621 @@
+local defaultEventData = ug_require("/core/event_data_loader.lua")
+local subsidyEventRuntime = ug_require("/core/subsidy_events.lua")
+local townConsumptionRuntime = ug_require("/core/town_consumption.lua")
+local industryCatalog = ug_require("/utils/industry_catalog.lua")
+local validateDataset = defaultEventData.validateDataset
+
+local function getIndustryPlacementType(fileName)
+    local industry = industryCatalog.getIndustryByFilename(fileName)
+    return industry and industry.placement
+end
+
+local waterPlacementClearance = 200
+local diagonalDirection = 0.7071067811865476
+local waterPlacementClearanceDirections = {
+    { x = 1, y = 0 },
+    { x = diagonalDirection, y = diagonalDirection },
+    { x = 0, y = 1 },
+    { x = -diagonalDirection, y = diagonalDirection },
+    { x = -1, y = 0 },
+    { x = -diagonalDirection, y = -diagonalDirection },
+    { x = 0, y = -1 },
+    { x = diagonalDirection, y = -diagonalDirection },
+}
+
+local function hasWaterPlacementClearance(position)
+    if not api.engine.terrain.isOnWater(position) then
+        return false
+    end
+
+    for _, direction in ipairs(waterPlacementClearanceDirections) do
+        local sample = api.type.Vec2f.new(
+            position.x + direction.x * waterPlacementClearance,
+            position.y + direction.y * waterPlacementClearance
+        )
+        if not api.engine.terrain.isValidCoordinate(sample) or not api.engine.terrain.isOnWater(sample) then
+            return false
+        end
+    end
+    return true
+end
+
+local function getIndustrySpawns(spawnerState)
+    local combined, seen = {}, {}
+    for _, list in ipairs({ defaultEventData.industryEvents or {}, spawnerState and spawnerState.customIndustrySpawns or {} }) do
+        for _, event in ipairs(list) do
+            if not seen[event.id] then
+                seen[event.id] = true
+                combined[#combined + 1] = event
+            end
+        end
+    end
+    return combined
+end
+local function getSubsidyEvents(spawnerState)
+    local combined = {}
+    for _, event in ipairs(defaultEventData.subsidyEvents or {}) do combined[#combined + 1] = event end
+    for _, event in ipairs(spawnerState and spawnerState.customSubsidyEvents or {}) do combined[#combined + 1] = event end
+    return combined
+end
+local function getTownConsumptionEvents(spawnerState)
+    local eventsByTown, combined = {}, {}
+    local fields = {
+        "consumptionCommercialSlots",
+        "consumptionIndustrialSlots",
+    }
+
+    for _, eventList in ipairs({
+        defaultEventData.townConsumptionEvents or {},
+        spawnerState and spawnerState.customTownConsumptionEvents or {},
+    }) do
+        for _, event in ipairs(eventList) do
+            local merged = eventsByTown[event.townName]
+            if not merged then
+                merged = { townName = event.townName }
+                eventsByTown[event.townName] = merged
+                combined[#combined + 1] = merged
+            end
+            for _, field in ipairs(fields) do
+                if event[field] ~= nil then merged[field] = event[field] end
+            end
+        end
+    end
+
+    return combined
+end
+local cargoTypeIds = {}
+local missingCargoTypes = {}
+local missingTowns = {}
+local roadConnectionCheckUnavailableLogged = false
+local queuedSpawnCompletions = {}
+local queuedNativeNameChanges = {}
+local pendingSpawnRecoveryDone = false
+
+local function recoverStalePendingSpawns(spawnerState)
+    if pendingSpawnRecoveryDone then
+        return
+    end
+    pendingSpawnRecoveryDone = true
+
+    for spawnId, isPending in pairs(spawnerState.pendingSpawns or {}) do
+        if isPending then
+            spawnerState.pendingSpawns[spawnId] = nil
+            log.warning("Cleared interrupted industry spawn from a previous runtime; id = " .. tostring(spawnId))
+        end
+    end
+end
+
+local function getConstructionSeed(spawnId)
+    local seed = 0
+    for index = 1, #spawnId do
+        seed = (seed * 31 + string.byte(spawnId, index)) % 2147483647
+    end
+
+    return seed == 0 and 1 or seed
+end
+
+local function isDateReached(currentDate, targetDate)
+    if currentDate.year ~= targetDate.year then
+        return currentDate.year > targetDate.year
+    end
+    if currentDate.month ~= targetDate.month then
+        return currentDate.month > targetDate.month
+    end
+    return currentDate.day >= targetDate.day
+end
+
+local function getCargoTypeId(cargoTypeFileName)
+    local cargoTypeId = cargoTypeIds[cargoTypeFileName]
+    if cargoTypeId == nil then
+        cargoTypeId = api.res.cargoTypeRep.find(cargoTypeFileName)
+        cargoTypeIds[cargoTypeFileName] = cargoTypeId
+    end
+
+    if cargoTypeId < 0 then
+        if not missingCargoTypes[cargoTypeFileName] then
+            log.warning("Cargo type resource not found; its trigger will remain inactive; resName = "
+                .. cargoTypeFileName)
+            missingCargoTypes[cargoTypeFileName] = true
+        end
+        return nil
+    end
+
+    return cargoTypeId
+end
+
+local function getIndustryCargoFlow(trigger)
+    local cargoTypeId = getCargoTypeId(trigger.cargoTypeFileName)
+    if not cargoTypeId then
+        return nil
+    end
+
+    local industryFileName = trigger.industryFileName or trigger.sourceIndustryFileName
+    local industryName = trigger.industryName or trigger.sourceIndustryName
+    local cargoPerYear
+    api.engine.forEachEntityWithComponent(function(entity)
+        if cargoPerYear ~= nil then
+            return
+        end
+
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        local construction = industry
+            and api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+        if not construction or construction.fileName ~= industryFileName then
+            return
+        end
+
+        local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
+        if not name or name.name ~= industryName then
+            name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
+        end
+        if not name or name.name ~= industryName then
+            return
+        end
+
+        if (trigger.direction or "shipped") == "delivered" then
+            cargoPerYear = api.engine.util.stock.getCargoTypeDeliveredPerYear(industry.stockList, cargoTypeId)
+        else
+            cargoPerYear = api.engine.util.stock.getCargoTypeShippedPerYear(industry.stockList, cargoTypeId)
+        end
+    end, api.type.ComponentType.INDUSTRY)
+
+    return cargoPerYear
+end
+
+local function isDue(spawn, currentDate, currentTimeOfDaySec)
+    local trigger = spawn.trigger
+    if trigger.type == "date" then
+        if not isDateReached(currentDate, trigger.date) then
+            return false
+        end
+
+        if currentDate.year == trigger.date.year
+            and currentDate.month == trigger.date.month
+            and currentDate.day == trigger.date.day
+            and currentTimeOfDaySec < (trigger.timeOfDaySec or 0) then
+            return false
+        end
+
+        return true
+    elseif trigger.type == "shipment" then
+        local cargoPerYear = getIndustryCargoFlow(trigger)
+        local minimumPerYear = trigger.minimumShippedPerYear
+        if trigger.direction == "delivered" then
+            minimumPerYear = trigger.minimumDeliveredPerYear
+        end
+        return cargoPerYear ~= nil and cargoPerYear >= minimumPerYear
+    end
+
+    log.error("Unknown industry spawn trigger type; id = " .. spawn.id .. ", type = " .. tostring(trigger.type))
+    return false
+end
+
+local function findTownByName(townName)
+    local matchingTown
+    api.engine.forEachEntityWithComponent(function(entity)
+        if matchingTown then
+            return
+        end
+
+        local name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
+        if name and name.name == townName then
+            matchingTown = entity
+        end
+    end, api.type.ComponentType.TOWN)
+
+    return matchingTown
+end
+
+local function hasSpawnTown(spawn)
+    if not spawn.location then
+        return true
+    end
+
+    local townName = spawn.location.townName
+    if type(townName) ~= "string" or townName == "" then
+        log.error("Industry spawn location requires a town name; id = " .. spawn.id)
+        return false
+    end
+
+    if findTownByName(townName) then
+        missingTowns[townName] = nil
+        return true
+    end
+
+    if not missingTowns[townName] then
+        log.error("Industry spawn town not found; spawn will wait; id = " .. spawn.id .. ", town = " .. townName)
+        missingTowns[townName] = true
+    end
+    return false
+end
+
+local function getCompassDirection(position, referencePosition)
+    local xDistance = position.x - referencePosition.x
+    local yDistance = position.y - referencePosition.y
+    if math.abs(xDistance) > math.abs(yDistance) then
+        return xDistance >= 0 and "east" or "west"
+    end
+    return yDistance >= 0 and "north" or "south"
+end
+
+local function getWeightedDirection(weights)
+    local directions = { "north", "east", "south", "west" }
+    local totalWeight = 0
+    for _, direction in ipairs(directions) do
+        local weight = weights[direction] or 0
+        if type(weight) ~= "number" or weight < 0 then
+            return nil
+        end
+        totalWeight = totalWeight + weight
+    end
+    if totalWeight <= 0 then
+        return nil
+    end
+
+    local selection = math.random() * totalWeight
+    for _, direction in ipairs(directions) do
+        selection = selection - (weights[direction] or 0)
+        if selection < 0 then
+            return direction
+        end
+    end
+    return directions[#directions]
+end
+
+local function getTownPositions(spawn, placementType)
+    local maximumTownSpawnDistance = 2500
+    local distanceWeightStep = maximumTownSpawnDistance / 10
+    local distanceWeightTolerance = 100
+    local townName = spawn.location.townName
+    local townEntity = findTownByName(townName)
+    if not townEntity then
+        log.error("Industry spawn town not found; id = " .. spawn.id .. ", town = " .. tostring(townName))
+        return {}
+    end
+
+    local weights = spawn.location.directionWeights or { north = 1, east = 1, south = 1, west = 1 }
+    local distanceWeights = spawn.location.distanceWeights or {}
+    if not getWeightedDirection(weights) then
+        log.error("Industry spawn has invalid directionWeights; id = " .. spawn.id)
+        return {}
+    end
+
+    local xTotal, yTotal, buildingCount = 0, 0, 0
+    local townBuildings = api.engine.system.townBuildingSystem.getTown2BuildingMap()[townEntity] or {}
+    for _, townBuildingEntity in ipairs(townBuildings) do
+        local townBuilding = api.engine.getComponent(townBuildingEntity, api.type.ComponentType.TOWN_BUILDING)
+        local construction = townBuilding
+            and api.engine.getComponent(townBuilding.construction, api.type.ComponentType.CONSTRUCTION)
+        if construction then
+            xTotal = xTotal + construction.transf[13]
+            yTotal = yTotal + construction.transf[14]
+            buildingCount = buildingCount + 1
+        end
+    end
+
+    local referencePosition
+    if buildingCount > 0 then
+        referencePosition = { x = xTotal / buildingCount, y = yTotal / buildingCount }
+    else
+        local position = api.engine.util.town.getRandomTownPosition(townEntity, math.random(0, 10000))
+        referencePosition = { x = position.x, y = position.y }
+    end
+
+    local isWaterPlacement = placementType == "water"
+    local roadNodes = {}
+    if not isWaterPlacement then
+        local node2StreetEdgeMap = api.engine.system.streetSystem.getNode2StreetEdgeMap()
+        for entity, streetEdges in pairs(node2StreetEdgeMap) do
+            if #streetEdges > 0 then
+                local node = api.engine.getComponent(entity, api.type.ComponentType.BASE_NODE)
+                if node then
+                    local xDistance = node.position.x - referencePosition.x
+                    local yDistance = node.position.y - referencePosition.y
+                    if xDistance * xDistance + yDistance * yDistance
+                        <= maximumTownSpawnDistance * maximumTownSpawnDistance then
+                        roadNodes[#roadNodes + 1] = node.position
+                    end
+                end
+            end
+        end
+        if #roadNodes == 0 then
+            log.warning("No nearby road nodes found for industry spawn; id = " .. spawn.id)
+            return {}
+        end
+    end
+
+    local preferredPositionsByDirection = { north = {}, east = {}, south = {}, west = {} }
+    local positionsByDirection = { north = {}, east = {}, south = {}, west = {} }
+    local candidateSampleCount = isWaterPlacement and 2048 or 512
+    for _ = 1, candidateSampleCount do
+        local position
+        if isWaterPlacement then
+            local angle = math.random() * math.pi * 2
+            local radius = math.sqrt(math.random()) * maximumTownSpawnDistance
+            position = {
+                x = referencePosition.x + math.cos(angle) * radius,
+                y = referencePosition.y + math.sin(angle) * radius,
+            }
+        else
+            position = api.engine.util.town.getRandomTownPosition(townEntity, math.random(0, 10000))
+        end
+        local candidate = { x = position.x, y = position.y }
+        if api.engine.terrain.isValidCoordinate(api.type.Vec2f.new(candidate.x, candidate.y)) then
+            local xFromTown = candidate.x - referencePosition.x
+            local yFromTown = candidate.y - referencePosition.y
+            local distanceFromTown = math.sqrt(xFromTown * xFromTown + yFromTown * yFromTown)
+            if distanceFromTown <= maximumTownSpawnDistance then
+                local position2d = api.type.Vec2f.new(candidate.x, candidate.y)
+                local matchesPlacement
+                if placementType == "water" then
+                    matchesPlacement = hasWaterPlacementClearance(position2d)
+                elseif placementType == "land" then
+                    matchesPlacement = not api.engine.terrain.isOnWater(position2d)
+                else
+                    matchesPlacement = true
+                end
+                local validPosition = matchesPlacement
+
+                local nearestRoadDistance
+                if validPosition and not isWaterPlacement then
+                    nearestRoadDistance = math.huge
+                    local nearestRoadHeight
+                    for _, roadNode in ipairs(roadNodes) do
+                        local xDistance = candidate.x - roadNode.x
+                        local yDistance = candidate.y - roadNode.y
+                        local roadDistance = math.sqrt(xDistance * xDistance + yDistance * yDistance)
+                        if roadDistance < nearestRoadDistance then
+                            nearestRoadDistance = roadDistance
+                            nearestRoadHeight = roadNode.z
+                        end
+                    end
+
+                    local height = api.engine.terrain.getHeightAt(position2d)
+                    local slopeRange = 0
+                    for _, offset in ipairs({
+                        { x = -50, y = 0 },
+                        { x = 50, y = 0 },
+                        { x = 0, y = -50 },
+                        { x = 0, y = 50 },
+                    }) do
+                        local sample = api.type.Vec2f.new(candidate.x + offset.x, candidate.y + offset.y)
+                        if not api.engine.terrain.isValidCoordinate(sample) then
+                            validPosition = false
+                            break
+                        end
+                        local sampleHeight = api.engine.terrain.getHeightAt(sample)
+                        slopeRange = math.max(slopeRange, math.abs(sampleHeight - height))
+                    end
+
+                    validPosition = validPosition
+                        and nearestRoadDistance >= 30
+                        and nearestRoadDistance <= 350
+                        and math.abs(height - nearestRoadHeight) <= 15
+                        and slopeRange <= 12
+                end
+
+                if validPosition then
+                    local direction = getCompassDirection(candidate, referencePosition)
+                    candidate.direction = direction
+                    candidate.distanceFromTown = distanceFromTown
+                    candidate.nearestRoadDistance = nearestRoadDistance
+                    local distanceWeight = distanceWeights[direction]
+                    local targetDistance = distanceWeight and distanceWeight * distanceWeightStep
+                    local candidates = positionsByDirection[direction]
+                    local isPreferredDistance = false
+                    if distanceWeight == 1 then
+                        isPreferredDistance = distanceFromTown <= distanceWeightStep + distanceWeightTolerance
+                    elseif targetDistance then
+                        isPreferredDistance = math.abs(distanceFromTown - targetDistance) <= distanceWeightTolerance
+                    end
+                    if isPreferredDistance then
+                        candidates = preferredPositionsByDirection[direction]
+                    end
+                    candidates[#candidates + 1] = candidate
+                end
+            end
+        end
+    end
+
+    for _, direction in ipairs({ "north", "east", "south", "west" }) do
+        local preferredCandidates = preferredPositionsByDirection[direction]
+        local candidates = positionsByDirection[direction]
+        local preferredLimit = #candidates > 0 and 31 or 32
+        while #preferredCandidates > preferredLimit do
+            table.remove(preferredCandidates, math.random(#preferredCandidates))
+        end
+        local remainingCount = 32 - #preferredCandidates
+        while #candidates > remainingCount do
+            table.remove(candidates, math.random(#candidates))
+        end
+    end
+
+    local remainingWeights = {
+        north = weights.north or 0,
+        east = weights.east or 0,
+        south = weights.south or 0,
+        west = weights.west or 0,
+    }
+    local positions = {}
+    while true do
+        local direction = getWeightedDirection(remainingWeights)
+        local preferredCandidates = direction and preferredPositionsByDirection[direction]
+        local candidates = direction and (#preferredCandidates > 0
+            and preferredCandidates or positionsByDirection[direction])
+        if direction and #candidates > 0 then
+            local candidateIndex = math.random(#candidates)
+            positions[#positions + 1] = table.remove(candidates, candidateIndex)
+        elseif direction then
+            remainingWeights[direction] = 0
+        else
+            local availableDirections = {}
+            for _, fallbackDirection in ipairs({ "north", "east", "south", "west" }) do
+                if #preferredPositionsByDirection[fallbackDirection] > 0
+                    or #positionsByDirection[fallbackDirection] > 0 then
+                    availableDirections[#availableDirections + 1] = fallbackDirection
+                end
+            end
+            if #availableDirections == 0 then
+                break
+            end
+
+            local fallbackDirection = availableDirections[math.random(#availableDirections)]
+            local preferredCandidates = preferredPositionsByDirection[fallbackDirection]
+            local candidates = #preferredCandidates > 0
+                and preferredCandidates or positionsByDirection[fallbackDirection]
+            local candidateIndex = math.random(#candidates)
+            positions[#positions + 1] = table.remove(candidates, candidateIndex)
+        end
+    end
+
+    return positions
+end
+
+local function getSpawnPositions(spawn, placementType)
+    if spawn.location then
+        return getTownPositions(spawn, placementType)
+    end
+
+    return { spawn.position }
+end
+
+local function getSpawnRotation(spawn)
+    if spawn.rotation == "random" then
+        return math.random() * math.pi * 2
+    end
+    return spawn.rotation or 0
+end
+
+local function traceIndustrySpawn(spawn, stage, details)
+    local spawnId = type(spawn) == "table" and (spawn.id or spawn.spawnId) or spawn
+    log.message("Industry spawn trace: id = " .. tostring(spawnId)
+        .. ", stage = " .. stage
+        .. (details and ", " .. details or ""))
+end
+
+local function describeValueTypes(values)
+    if type(values) ~= "table" then
+        return "type=" .. type(values)
+    end
+    local descriptions = {}
+    for key, value in pairs(values) do
+        descriptions[#descriptions + 1] = tostring(key) .. ":" .. type(value)
+    end
+    table.sort(descriptions)
+    return table.concat(descriptions, ",")
+end
+
+local function findIndustryNameTarget(constructionEntity, resultEntities)
+    local candidates = {}
+    local candidateSet = {}
+    local function addCandidate(entity)
+        if type(entity) == "number" and not candidateSet[entity] then
+            candidateSet[entity] = true
+            candidates[#candidates + 1] = entity
+        end
+    end
+    addCandidate(constructionEntity)
+    if type(resultEntities) == "table" then
+        for _, group in pairs(resultEntities) do
+            if type(group) == "table" then
+                for _, entity in pairs(group) do
+                    addCandidate(entity)
+                end
+            else
+                addCandidate(group)
+            end
+        end
+    end
+
+    local ids = {}
+    for _, entity in ipairs(candidates) do
+        ids[#ids + 1] = tostring(entity)
+    end
+    local resultEntityIds = table.concat(ids, ",")
+    local function hasNameComponent(entity)
+        return api.engine.entityExists(entity)
+            and api.engine.getComponent(entity, api.type.ComponentType.NAME) ~= nil
+    end
+    for _, entity in ipairs(candidates) do
+        if hasNameComponent(entity)
+            and api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY) then
+            return entity, resultEntityIds, candidates
+        end
+    end
+
+    local nameEntity
+    api.engine.forEachEntityWithComponent(function(entity)
+        if nameEntity then
+            return
+        end
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        if industry and candidateSet[industry.construction] and hasNameComponent(entity) then
+            nameEntity = entity
+        end
+    end, api.type.ComponentType.INDUSTRY)
+
+    if not nameEntity then
+        for _, entity in ipairs(candidates) do
+            if hasNameComponent(entity) then
+                nameEntity = entity
+                break
+            end
+        end
+    end
+
+    return nameEntity, resultEntityIds, candidates
+end
+
+local function townHasWaterPlacedIndustry(townEntity)
+    local found = false
+    api.engine.forEachEntityWithComponent(function(entity)
+        if found then
+            return
+        end
+
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        local construction = industry
+            and api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+        if construction and getIndustryPlacementType(construction.fileName) == "water" then
+            local industryTown = api.engine.system.streetConnectorSystem.getConstructionClosestTown(
+                industry.construction
+            )
+            if not industryTown or industryTown < 0 then
+                local position = api.type.Mat4f.getTransl and api.type.Mat4f.getTransl(construction.transf)
+                    or api.type.Vec3f.new(construction.transf[13], construction.transf[14], construction.transf[15])
+                industryTown = api.engine.util.town.getClosestTown(position)
+            end
+            if industryTown == townEntity then
+                found = true
+            end
+        end
+    end, api.type.ComponentType.INDUSTRY)
+    return found
+end
+
+local function connectIndustryToNearestTown(constructionEntity, spawn)
+    if getIndustryPlacementType(spawn.fileName) == "water" then
+        return
+    end
+
+    local townEntity = api.engine.system.streetConnectorSystem.getConstructionClosestTown(constructionEntity)
+    if (not townEntity or townEntity < 0) and spawn.location and spawn.location.townName then
+        townEntity = findTownByName(spawn.location.townName)
+    end
+    if not townEntity or townEntity < 0 then
+        local construction = api.engine.getComponent(constructionEntity, api.type.ComponentType.CONSTRUCTION)
+        if construction then
+            local position = api.type.Mat4f.getTransl and api.type.Mat4f.getTransl(construction.transf)
+                or api.type.Vec3f.new(construction.transf[13], construction.transf[14], construction.transf[15])
+            townEntity = api.engine.util.town.getClosestTown(position)
+        end
+    end
+    if not townEntity or townEntity < 0 then
+        log.error("Unable to resolve a town for spawned industry road connection; id = " .. spawn.id)
+        return
+    end
+
+    if townHasWaterPlacedIndustry(townEntity) then
+        log.warning("Skipped town road repair because it would also connect water-placed industries; town = "
+            .. tostring(townEntity))
+        return
+    end
+
+    log.message("Generating town road connections for spawned industry: " .. spawn.id)
+    local command = api.cmd.makeTownConnectWithIndustriesCmd({ townEntity }, {}, true)
+    api.cmd.sendCommand(command, function(_, success)
+        if success then
+            log.message("Town road connection generation succeeded for spawned industry: " .. spawn.id)
+        else
+            log.error("Failed to generate town road connections for spawned industry; id = " .. spawn.id)
+        end
+    end)
+end
+
+local function getConstructionEntityForRoadProblem(entity)
+    if api.engine.getComponent(entity, api.type.ComponentType.CONSTRUCTION) then
+        return entity
+    end
+
+    local constructionEntity = api.engine.system.streetConnectorSystem.getConstructionEntityForNode(entity)
+    if constructionEntity and constructionEntity >= 0
+        and api.engine.getComponent(constructionEntity, api.type.ComponentType.CONSTRUCTION) then
+        return constructionEntity
+    end
+
+    return nil
+end
+
+local function getNoRoadConnectionConstructionSet()
+    local getNoRoadConnectionProblems = api.engine.util.getNoRoadConnectionProblems
+    if type(getNoRoadConnectionProblems) ~= "function" then
+        if not roadConnectionCheckUnavailableLogged then
+            log.warning("This TF3 runtime does not expose getNoRoadConnectionProblems; manual road status checks are unavailable")
+            roadConnectionCheckUnavailableLogged = true
+        end
+        return nil
+    end
+
+    local noRoadConnectionProblems = {}
+    for _, problemEntity in ipairs(getNoRoadConnectionProblems()) do
+        local constructionEntity = getConstructionEntityForRoadProblem(problemEntity)
+        if constructionEntity then
+            noRoadConnectionProblems[constructionEntity] = true
+        else
+            log.warning("Unable to resolve construction from no-road-connection result; entity = "
+                .. tostring(problemEntity))
+        end
+    end
+
+    return noRoadConnectionProblems
+end
+
+local function checkSpawnedIndustryRoadConnections(spawnerState)
+    local industrySpawns = getIndustrySpawns(spawnerState)
+    local noRoadConnectionProblems = getNoRoadConnectionConstructionSet()
+    if not noRoadConnectionProblems then
+        log.warning("Cannot check spawned-industry road status with this TF3 runtime")
+        return
+    end
+
+    local connectedCount = 0
+    local disconnectedCount = 0
+    local townsToReconnect = {}
+    local checkedConstructions = {}
+    api.engine.forEachEntityWithComponent(function(entity)
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        if not industry or checkedConstructions[industry.construction] then
+            return
+        end
+
+        local construction = api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+        if not construction then
+            return
+        end
+
+        local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
+        if not name or not name.name then
+            name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
+        end
+        if not name then
+            return
+        end
+
+        local matchingSpawn
+        for _, spawn in ipairs(industrySpawns) do
+            if construction.fileName == spawn.fileName and name.name == spawn.name then
+                matchingSpawn = spawn
+                break
+            end
+        end
+        if not matchingSpawn then
+            return
+        end
+
+        checkedConstructions[industry.construction] = true
+        if getIndustryPlacementType(matchingSpawn.fileName) == "water" then
+            return
+        end
+        if noRoadConnectionProblems[industry.construction] then
+            disconnectedCount = disconnectedCount + 1
+            local townEntity = matchingSpawn.location and findTownByName(matchingSpawn.location.townName)
+            if not townEntity or townEntity < 0 then
+                townEntity = api.engine.system.streetConnectorSystem.getConstructionClosestTown(industry.construction)
+            end
+            if townEntity and townEntity >= 0 then
+                townsToReconnect[townEntity] = true
+            else
+                log.error("Disconnected spawned industry has no town to connect; id = " .. matchingSpawn.id)
+            end
+        else
+            connectedCount = connectedCount + 1
+        end
+    end, api.type.ComponentType.INDUSTRY)
+
+    log.message("Developer road check: " .. connectedCount .. " spawned industry/industries connected; "
+        .. disconnectedCount .. " disconnected")
+
+    for townEntity in pairs(townsToReconnect) do
+        if townHasWaterPlacedIndustry(townEntity) then
+            log.warning("Skipped developer road repair because it would also connect water-placed industries; town = "
+                .. tostring(townEntity))
+        else
+            local command = api.cmd.makeTownConnectWithIndustriesCmd({ townEntity }, {}, true)
+            api.cmd.sendCommand(command, function(_, success)
+                if success then
+                    log.message("Requested road connection generation for disconnected spawned industries; town = "
+                        .. tostring(townEntity))
+                else
+                    log.error("Failed to request road connection generation; town = " .. tostring(townEntity))
+                end
+            end)
+        end
+    end
+end
+
+local function spawnIndustry(spawn, onComplete)
+    traceIndustrySpawn(spawn, "begin",
+        "fileName=" .. tostring(spawn.fileName)
+        .. ", name=" .. tostring(spawn.name)
+        .. ", nameType=" .. type(spawn.name)
+        .. ", town=" .. tostring(spawn.location and spawn.location.townName))
+    local constructionId = api.res.constructionRep.find(spawn.fileName)
+    traceIndustrySpawn(spawn, "construction-lookup", "constructionId=" .. tostring(constructionId))
+    if constructionId == -1 then
+        log.error("Industry construction resource not found; resName = " .. spawn.fileName)
+        onComplete(false)
+        return
+    end
+
+    local placementType = getIndustryPlacementType(spawn.fileName)
+    traceIndustrySpawn(spawn, "position-search-call",
+        "placementType=" .. tostring(placementType)
+        .. ", town=" .. tostring(spawn.location and spawn.location.townName)
+        .. ", directionWeightTypes=" .. describeValueTypes(
+            spawn.location and spawn.location.directionWeights))
+    local positions = getSpawnPositions(spawn, placementType)
+    traceIndustrySpawn(spawn, "positions-ready",
+        "placementType=" .. tostring(placementType) .. ", candidateCount=" .. tostring(#positions))
+    if #positions == 0 then
+        log.error("No valid spawn positions found; id = " .. spawn.id)
+        onComplete(false)
+        return
+    end
+
+    local function tryPosition(index)
+        local position = positions[index]
+        if not position then
+            onComplete(false)
+            return
+        end
+
+        traceIndustrySpawn(spawn, "candidate",
+            "attempt=" .. tostring(index) .. "/" .. tostring(#positions)
+            .. ", x=" .. tostring(position.x)
+            .. ", y=" .. tostring(position.y)
+            .. ", direction=" .. tostring(position.direction)
+            .. ", distanceFromTown=" .. tostring(position.distanceFromTown)
+            .. ", nearestRoadDistance=" .. tostring(position.nearestRoadDistance))
+        traceIndustrySpawn(spawn, "vec2-call",
+            "xType=" .. type(position.x) .. ", yType=" .. type(position.y))
+        local position2d = api.type.Vec2f.new(position.x, position.y)
+        traceIndustrySpawn(spawn, "vec2-ready", "positionType=" .. type(position2d))
+        if not api.engine.terrain.isValidCoordinate(position2d) then
+            traceIndustrySpawn(spawn, "candidate-rejected", "reason=invalid-coordinate")
+            tryPosition(index + 1)
+            return
+        end
+        local validPlacement = true
+        if placementType == "water" then
+            validPlacement = hasWaterPlacementClearance(position2d)
+        elseif placementType == "land" then
+            validPlacement = not api.engine.terrain.isOnWater(position2d)
+        end
+        if not validPlacement then
+            traceIndustrySpawn(spawn, "candidate-rejected", "reason=placement-type")
+            tryPosition(index + 1)
+            return
+        end
+
+        do
+            local constructionDesc = api.res.constructionRep.get(constructionId)
+            if not constructionDesc or not constructionDesc.placementTag or constructionDesc.placementTag == "" then
+                log.warning("Native industry placement requires a construction placement tag; id = " .. spawn.id)
+                onComplete(false)
+                return
+            end
+            if not api.engine.mapgen or not api.engine.mapgen.createIndustries
+                or not api.engine.util.proposal or not api.engine.util.proposal.createIndustryProposal then
+                log.warning("Native industry placement API is unavailable; id = " .. spawn.id)
+                onComplete(false)
+                return
+            end
+
+            local seed = tostring(getConstructionSeed(spawn.id))
+            traceIndustrySpawn(spawn, "map-industry-constructor-call")
+            local mapIndustry = api.type.Map.Industry.new()
+            traceIndustrySpawn(spawn, "map-industry-constructor-return",
+                "industryType=" .. type(mapIndustry))
+            mapIndustry.onWater = placementType == "water"
+            mapIndustry.fileName = spawn.fileName
+            mapIndustry.tag = constructionDesc.placementTag
+            mapIndustry.pos = position2d
+            local rotation = getSpawnRotation(spawn)
+            mapIndustry.angle = rotation
+
+            traceIndustrySpawn(spawn, "create-industries-call",
+                "seedType=" .. type(seed)
+                .. ", mapIndustryType=" .. type(mapIndustry)
+                .. ", onWaterType=" .. type(mapIndustry.onWater)
+                .. ", fileNameType=" .. type(mapIndustry.fileName)
+                .. ", tagType=" .. type(mapIndustry.tag)
+                .. ", posType=" .. type(mapIndustry.pos)
+                .. ", angleType=" .. type(mapIndustry.angle)
+                .. ", fileName=" .. tostring(mapIndustry.fileName)
+                .. ", tag=" .. tostring(mapIndustry.tag)
+                .. ", angle=" .. tostring(mapIndustry.angle))
+            local industryResult = api.engine.mapgen.createIndustries(seed, { mapIndustry })
+            traceIndustrySpawn(spawn, "create-industries-return",
+                "resultType=" .. type(industryResult))
+            local industryInfo = industryResult and industryResult.toAdd and industryResult.toAdd[1]
+            traceIndustrySpawn(spawn, "industry-info",
+                "resultType=" .. type(industryResult) .. ", infoType=" .. type(industryInfo))
+            if not industryInfo then
+                log.warning("Native industry placement produced no industry info; id = " .. spawn.id)
+                if spawn.location then
+                    tryPosition(index + 1)
+                else
+                    onComplete(false)
+                end
+                return
+            end
+
+            traceIndustrySpawn(spawn, "create-context-call")
+            local context = api.type.Context.new()
+            traceIndustrySpawn(spawn, "create-context-return", "contextType=" .. type(context))
+            traceIndustrySpawn(spawn, "create-industry-proposal-call",
+                "seedType=" .. type(seed)
+                .. ", industryInfoType=" .. type(industryInfo)
+                .. ", contextType=" .. type(context))
+            local proposal = api.engine.util.proposal.createIndustryProposal(seed, industryInfo, context)
+            traceIndustrySpawn(spawn, "create-industry-proposal-return",
+                "proposalType=" .. type(proposal))
+            local proposalItem = proposal and proposal.toAdd and proposal.toAdd[1]
+            traceIndustrySpawn(spawn, "proposal-item",
+                "proposalType=" .. type(proposal) .. ", itemType=" .. type(proposalItem))
+            if not proposalItem or not proposalItem.construction then
+                log.warning("Native industry placement produced no construction proposal; id = " .. spawn.id)
+                if spawn.location then
+                    tryPosition(index + 1)
+                else
+                    onComplete(false)
+                end
+                return
+            end
+
+            local constructionParams = {}
+            for key, value in pairs(proposalItem.construction.params or {}) do
+                constructionParams[key] = value
+            end
+            for key, value in pairs(spawn.params or {}) do
+                constructionParams[key] = value
+            end
+            if constructionParams.seed == nil then
+                constructionParams.seed = getConstructionSeed(spawn.id)
+            end
+            proposalItem.construction.params = constructionParams
+
+            traceIndustrySpawn(spawn, "proposal-construction-raw-fields",
+                "fileNameType=" .. type(proposalItem.construction.fileName)
+                .. ", fileName=" .. tostring(proposalItem.construction.fileName)
+                .. ", transfType=" .. type(proposalItem.construction.transf))
+            local collisionProposal = api.type.SimpleProposal.new()
+            local collisionConstruction = api.type.SimpleProposal.ConstructionEntity.new()
+            local cosine = math.cos(rotation)
+            local sine = math.sin(rotation)
+            collisionConstruction.fileName = spawn.fileName
+            collisionConstruction.params = constructionParams
+            collisionConstruction.transf = api.type.Mat4f.new(
+                api.type.Vec4f.new(cosine, sine, 0, 0),
+                api.type.Vec4f.new(-sine, cosine, 0, 0),
+                api.type.Vec4f.new(0, 0, 1, 0),
+                api.type.Vec4f.new(
+                    position.x,
+                    position.y,
+                    api.engine.terrain.getHeightAt(position2d),
+                    1
+                )
+            )
+            collisionProposal.constructionsToAdd[1] = collisionConstruction
+            traceIndustrySpawn(spawn, "collision-proposal-ready",
+                "proposalType=" .. type(collisionProposal)
+                .. ", constructionType=" .. type(collisionConstruction)
+                .. ", fileName=" .. tostring(collisionConstruction.fileName)
+                .. ", transfType=" .. type(collisionConstruction.transf))
+
+            traceIndustrySpawn(spawn, "build-command-call",
+                "proposalType=" .. type(proposal)
+                .. ", contextType=" .. type(context)
+                .. ", constructionParamTypes=" .. describeValueTypes(constructionParams))
+            if placementType == "water" then
+                traceIndustrySpawn(spawn, "collision-check-skipped",
+                    "reason=water-placement; strict-build-validation-remains-enabled")
+            elseif api.engine.util.proposal.makeProposalData then
+                traceIndustrySpawn(spawn, "collision-check-call")
+                local proposalData = api.engine.util.proposal.makeProposalData(collisionProposal, context)
+                local collisionEntities = proposalData
+                    and proposalData.collisionInfo
+                    and proposalData.collisionInfo.collisionEntities or {}
+                traceIndustrySpawn(spawn, "collision-check-result",
+                    "collisionCount=" .. tostring(#collisionEntities))
+                if #collisionEntities > 0 then
+                    for _, collision in ipairs(collisionEntities) do
+                        local collisionEntity = type(collision) == "number" and collision or collision.entity
+                        local collisionFileName
+                        local collisionName
+                        if type(collisionEntity) == "number"
+                            and collisionEntity >= 0
+                            and api.engine.entityExists(collisionEntity) then
+                            local construction = api.engine.getComponent(
+                                collisionEntity,
+                                api.type.ComponentType.CONSTRUCTION
+                            )
+                            local industry = api.engine.getComponent(
+                                collisionEntity,
+                                api.type.ComponentType.INDUSTRY
+                            )
+                            if industry then
+                                construction = api.engine.getComponent(
+                                    industry.construction,
+                                    api.type.ComponentType.CONSTRUCTION
+                                ) or construction
+                                collisionName = api.engine.getComponent(
+                                    industry.construction,
+                                    api.type.ComponentType.NAME
+                                )
+                            end
+                            collisionName = collisionName
+                                or api.engine.getComponent(collisionEntity, api.type.ComponentType.NAME)
+                            collisionFileName = construction and construction.fileName
+                        end
+                        traceIndustrySpawn(spawn, "collision",
+                            "entity=" .. tostring(collisionEntity)
+                            .. ", fileName=" .. tostring(collisionFileName)
+                            .. ", name=" .. tostring(collisionName and collisionName.name))
+                    end
+                    tryPosition(index + 1)
+                    return
+                end
+            else
+                log.warning("Industry proposal collision check unavailable; relying on build validation")
+            end
+
+            local command = api.cmd.makeWorldBuildProposalCmd(proposal, context, false, false)
+            traceIndustrySpawn(spawn, "build-command-ready", "commandType=" .. type(command))
+            traceIndustrySpawn(spawn, "send-build-command")
+            api.cmd.sendCommand(command, function(_, success, resultEntities)
+                traceIndustrySpawn(spawn, "build-command-callback",
+                    "success=" .. tostring(success) .. ", resultEntitiesType=" .. type(resultEntities))
+                if not success then
+                    log.warning("Native industry build proposal failed; id = " .. spawn.id)
+                    if spawn.location then
+                        tryPosition(index + 1)
+                    else
+                        onComplete(false)
+                    end
+                    return
+                end
+
+                local constructionEntity = resultEntities and resultEntities[1] and resultEntities[1][1]
+                traceIndustrySpawn(spawn, "build-result",
+                    "constructionEntity=" .. tostring(constructionEntity)
+                    .. ", constructionEntityType=" .. type(constructionEntity))
+                local function finishNativeSpawn()
+                    log.message("Native industry spawn succeeded: " .. spawn.id .. " (" .. tostring(spawn.name)
+                        .. "); position = " .. tostring(position.x) .. "," .. tostring(position.y)
+                        .. "; nearestRoadDistance = " .. tostring(position.nearestRoadDistance))
+                    if constructionEntity then
+                        onComplete(true, position, constructionEntity)
+                    else
+                        log.warning("Native industry spawned but no construction entity was returned; id = " .. spawn.id)
+                        onComplete(true, position)
+                    end
+                end
+
+                if constructionEntity and spawn.name and spawn.name ~= "" then
+                    local nameTargetEntity, resultEntityIds, candidateEntities =
+                        findIndustryNameTarget(constructionEntity, resultEntities)
+                    traceIndustrySpawn(spawn, "name-queued",
+                        "constructionEntity=" .. tostring(constructionEntity)
+                        .. ", nameTargetEntity=" .. tostring(nameTargetEntity)
+                        .. ", resultEntityIds=" .. resultEntityIds)
+                    queuedNativeNameChanges[#queuedNativeNameChanges + 1] = {
+                        constructionEntity = constructionEntity,
+                        candidateEntities = candidateEntities,
+                        spawnId = spawn.id,
+                        name = spawn.name,
+                        attempts = 0,
+                    }
+                    finishNativeSpawn()
+                else
+                    finishNativeSpawn()
+                end
+            end)
+        end
+    end
+
+    tryPosition(1)
+end
+
+local function completeSpawn(spawnerState, spawnId, succeeded, constructionEntity, updateCount, isWaterPlacement)
+    traceIndustrySpawn(spawnId, "completion",
+        "succeeded=" .. tostring(succeeded)
+        .. ", constructionEntity=" .. tostring(constructionEntity)
+        .. ", updateCount=" .. tostring(updateCount)
+        .. ", isWaterPlacement=" .. tostring(isWaterPlacement))
+    spawnerState.pendingSpawns = spawnerState.pendingSpawns or {}
+    spawnerState.completedSpawns = spawnerState.completedSpawns or {}
+    spawnerState.spawnedConstructions = spawnerState.spawnedConstructions or {}
+    spawnerState.retryAfterUpdate = spawnerState.retryAfterUpdate or {}
+    spawnerState.pendingRoadConnections = spawnerState.pendingRoadConnections or {}
+    spawnerState.pendingSpawns[spawnId] = nil
+
+    if succeeded then
+        spawnerState.completedSpawns[spawnId] = true
+        spawnerState.retryAfterUpdate[spawnId] = nil
+        if constructionEntity then
+            spawnerState.spawnedConstructions[spawnId] = constructionEntity
+            if not isWaterPlacement then
+                spawnerState.pendingRoadConnections[#spawnerState.pendingRoadConnections + 1] = {
+                    constructionEntity = constructionEntity,
+                    spawnId = spawnId,
+                }
+            end
+        end
+    else
+        spawnerState.retryAfterUpdate[spawnId] = updateCount + 60
+        log.warning("Industry spawn failed; it will retry on a later update; id = " .. spawnId)
+    end
+end
+
+local function queueSpawnCompletion(spawnId, succeeded, constructionEntity, isWaterPlacement)
+    queuedSpawnCompletions[#queuedSpawnCompletions + 1] = {
+        spawnId = spawnId,
+        succeeded = succeeded,
+        constructionEntity = constructionEntity,
+        isWaterPlacement = isWaterPlacement,
+    }
+end
+
+local industrySpawner = {}
+
+local function collectSpawnedConstructionEntities(spawnerState)
+    local industrySpawns = getIndustrySpawns(spawnerState)
+    local constructionEntities = {}
+    local seenEntities = {}
+    local spawnedConstructions = spawnerState.spawnedConstructions or {}
+    local function addConstruction(entity)
+        if entity and entity >= 0
+            and not seenEntities[entity]
+            and api.engine.getComponent(entity, api.type.ComponentType.CONSTRUCTION) then
+            seenEntities[entity] = true
+            constructionEntities[#constructionEntities + 1] = entity
+        end
+    end
+
+    for _, entity in pairs(spawnedConstructions) do
+        addConstruction(entity)
+    end
+
+    api.engine.forEachEntityWithComponent(function(entity)
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        if not industry then
+            return
+        end
+
+        local construction = api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+        if not construction then
+            return
+        end
+
+        for _, spawn in ipairs(industrySpawns) do
+            if construction.fileName == spawn.fileName then
+                local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
+                if not name or name.name ~= spawn.name then
+                    name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
+                end
+                if name and name.name == spawn.name then
+                    addConstruction(industry.construction)
+                    log.message("Map test reset matched configured industry: "
+                        .. spawn.id .. " (construction " .. tostring(industry.construction) .. ")")
+                    break
+                end
+            end
+        end
+    end, api.type.ComponentType.INDUSTRY)
+
+    return constructionEntities
+end
+
+local function resetMapTestChanges(state)
+    local spawnerState = state:get() or {}
+    spawnerState.pendingSpawns = spawnerState.pendingSpawns or {}
+    spawnerState.completedSpawns = spawnerState.completedSpawns or {}
+    spawnerState.spawnedConstructions = spawnerState.spawnedConstructions or {}
+    state:set(spawnerState)
+    if spawnerState.resetInProgress then
+        log.warning("Map test reset ignored because another reset is already running")
+        return
+    end
+    for _, isPending in pairs(spawnerState.pendingSpawns or {}) do
+        if isPending then
+            log.warning("Map test reset ignored while an industry spawn is in progress; try again shortly")
+            return
+        end
+    end
+
+    if not spawnerState.startDate then
+        log.error("Cannot reset map date because the starting date was not captured")
+        return
+    end
+    spawnerState.resetInProgress = true
+    spawnerState.pendingRoadConnections = {}
+    state:set(spawnerState)
+
+    local constructionEntities = collectSpawnedConstructionEntities(spawnerState)
+    local function clearSpawnTracking(currentState)
+        currentState.pendingSpawns = {}
+        currentState.completedSpawns = {}
+        currentState.spawnedConstructions = {}
+        currentState.retryAfterUpdate = {}
+        currentState.pendingRoadConnections = {}
+        currentState.roadConnectionRepairScanDone = nil
+    end
+    local function resetDate()
+        local startDate = spawnerState.startDate
+        local date = api.type.Date.new(startDate.year, startDate.month, startDate.day)
+        api.cmd.sendCommand(api.cmd.makeGameSetDateCmd(date), function(_, success)
+            local currentState = state:get() or {}
+            currentState.resetInProgress = nil
+            if success then
+                log.message(string.format(
+                    "Map test reset complete; restored start date to %04d-%02d-%02d",
+                    startDate.year,
+                    startDate.month,
+                    startDate.day
+                ))
+            else
+                log.error("Map test reset could not restore the starting date")
+            end
+            state:set(currentState)
+        end)
+    end
+
+    if #constructionEntities == 0 then
+        clearSpawnTracking(spawnerState)
+        state:set(spawnerState)
+        log.warning("Map test reset found no industries matching configured construction paths and names")
+        resetDate()
+        return
+    end
+
+    local segmentsToRemove = {}
+    local seenSegments = {}
+    for _, constructionEntity in ipairs(constructionEntities) do
+        local segments = api.engine.util.construction.findSegmentsToDelete(constructionEntity, false)
+        for _, segmentEntity in ipairs(segments or {}) do
+            if not seenSegments[segmentEntity] then
+                seenSegments[segmentEntity] = true
+                segmentsToRemove[#segmentsToRemove + 1] = segmentEntity
+            end
+        end
+    end
+
+    local function removeConstructions(roadsRemoved)
+        log.message("Map test reset attempting to remove " .. #constructionEntities .. " industry construction(s)")
+        local proposal = api.type.SimpleProposal.new()
+        proposal.constructionsToRemove = constructionEntities
+        local command = api.cmd.makeWorldBuildProposalCmd(proposal, nil, false, false)
+        api.cmd.sendCommand(command, function(_, success)
+            if not success then
+                local currentState = state:get() or {}
+                currentState.resetInProgress = nil
+                state:set(currentState)
+                log.error("Failed to remove spawned industries; map test reset was not completed")
+                return
+            end
+
+            local currentState = state:get() or {}
+            clearSpawnTracking(currentState)
+            state:set(currentState)
+            log.message("Removed " .. #constructionEntities .. " mod-spawned industry construction(s)")
+            if not roadsRemoved then
+                log.warning("Some industry road segments could not be removed during map test reset")
+            end
+            resetDate()
+        end)
+    end
+
+    if #segmentsToRemove == 0 then
+        removeConstructions(true)
+        return
+    end
+
+    log.message("Map test reset attempting to remove " .. #segmentsToRemove .. " industry road segment(s)")
+    local roadProposal = api.engine.util.proposal.makeSegmentsRemoveProposal(segmentsToRemove)
+    local roadCommand = api.cmd.makeWorldBuildProposalCmd(roadProposal, nil, false, false)
+    api.cmd.sendCommand(roadCommand, function(_, roadsRemoved)
+        if roadsRemoved then
+            log.message("Removed " .. #segmentsToRemove .. " industry road segment(s)")
+        else
+            log.warning("Failed to remove industry road segments; continuing with industry removal")
+        end
+        removeConstructions(roadsRemoved)
+    end)
+end
+
+local function queueExistingSpawnRoadConnections(spawnerState)
+    local industrySpawns = getIndustrySpawns(spawnerState)
+    if spawnerState.roadConnectionRepairScanDone then
+        return
+    end
+    local noRoadConnectionProblems = getNoRoadConnectionConstructionSet()
+    if not noRoadConnectionProblems then
+        return
+    end
+    spawnerState.roadConnectionRepairScanDone = true
+
+    for _, spawn in ipairs(industrySpawns) do
+        if spawnerState.completedSpawns[spawn.id]
+            and getIndustryPlacementType(spawn.fileName) ~= "water" then
+            local queuedConstructions = {}
+            api.engine.forEachEntityWithComponent(function(entity)
+                local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+                local construction = industry
+                    and api.engine.getComponent(industry.construction, api.type.ComponentType.CONSTRUCTION)
+                if not construction or construction.fileName ~= spawn.fileName then
+                    return
+                end
+
+                local name = api.engine.getComponent(industry.construction, api.type.ComponentType.NAME)
+                if not name or name.name ~= spawn.name then
+                    name = api.engine.getComponent(entity, api.type.ComponentType.NAME)
+                end
+                if not name or name.name ~= spawn.name then
+                    return
+                end
+
+                if queuedConstructions[industry.construction] then
+                    return
+                end
+                queuedConstructions[industry.construction] = true
+                if noRoadConnectionProblems[industry.construction] then
+                    spawnerState.pendingRoadConnections[#spawnerState.pendingRoadConnections + 1] = {
+                        constructionEntity = industry.construction,
+                        spawnId = spawn.id,
+                    }
+                    log.message("Queuing road connection repair for disconnected industry: " .. spawn.id)
+                else
+                    log.message("Existing spawned industry is already road-connected: " .. spawn.id)
+                end
+            end, api.type.ComponentType.INDUSTRY)
+        end
+    end
+
+end
+
+industrySpawner.update = function(_userParams, state, _dt)
+    state:subscribeToEvent("developerTriggerSpawn")
+    state:subscribeToEvent("developerImportEvents")
+    state:subscribeToEvent("developerGrowTown")
+    state:subscribeToEvent("developerCheckIndustryRoadConnections")
+    state:subscribeToEvent("developerResetMap")
+
+    local spawnerState = state:get() or {}
+    local industrySpawns = getIndustrySpawns(spawnerState)
+    spawnerState.updateCount = (spawnerState.updateCount or 0) + 1
+    spawnerState.pendingSpawns = spawnerState.pendingSpawns or {}
+    spawnerState.completedSpawns = spawnerState.completedSpawns or {}
+    spawnerState.retryAfterUpdate = spawnerState.retryAfterUpdate or {}
+    spawnerState.pendingRoadConnections = spawnerState.pendingRoadConnections or {}
+    recoverStalePendingSpawns(spawnerState)
+    queueExistingSpawnRoadConnections(spawnerState)
+    if not spawnerState.initialized then
+        log.message("Map Scenario Toolkit spawner is running (" .. #industrySpawns .. " configured spawns)")
+        spawnerState.initialized = true
+    end
+
+    local world = api.engine.util.getWorld()
+    local gameTime = api.engine.getComponent(world, api.type.ComponentType.GAME_TIME)
+    local currentDate = api.engine.util.getCalendarDate(gameTime.gameTime)
+    for _, completion in ipairs(queuedSpawnCompletions) do
+        completeSpawn(
+            spawnerState,
+            completion.spawnId,
+            completion.succeeded,
+            completion.constructionEntity,
+            spawnerState.updateCount,
+            completion.isWaterPlacement
+        )
+    end
+    queuedSpawnCompletions = {}
+    subsidyEventRuntime.update(getSubsidyEvents(spawnerState), spawnerState, currentDate, gameTime.timeOfDaySec)
+    townConsumptionRuntime.update(getTownConsumptionEvents(spawnerState), spawnerState)
+
+    if not spawnerState.startDate then
+        spawnerState.startDate = {
+            year = currentDate.year,
+            month = currentDate.month,
+            day = currentDate.day,
+        }
+        log.message(string.format(
+            "Captured map starting date: %04d-%02d-%02d",
+            currentDate.year,
+            currentDate.month,
+            currentDate.day
+        ))
+    end
+    if spawnerState.resetInProgress then
+        state:set(spawnerState)
+        return false
+    end
+    local nativeNameChanges = queuedNativeNameChanges
+    queuedNativeNameChanges = {}
+    local dueSpawns = {}
+    local roadConnections = spawnerState.pendingRoadConnections
+    spawnerState.pendingRoadConnections = {}
+
+    local hasPendingSpawn = false
+    for _, isPending in pairs(spawnerState.pendingSpawns) do
+        if isPending then
+            hasPendingSpawn = true
+            break
+        end
+    end
+    if not hasPendingSpawn then
+        for _, spawn in ipairs(industrySpawns) do
+            if not spawnerState.completedSpawns[spawn.id]
+                and (not spawnerState.retryAfterUpdate[spawn.id]
+                    or spawnerState.updateCount >= spawnerState.retryAfterUpdate[spawn.id])
+                and isDue(spawn, currentDate, gameTime.timeOfDaySec)
+                and hasSpawnTown(spawn) then
+                    local targetDate = spawn.trigger.date
+                    traceIndustrySpawn(spawn, "trigger-reached",
+                        "triggerType=" .. tostring(spawn.trigger.type)
+                        .. ", currentDate=" .. string.format(
+                            "%04d-%02d-%02d", currentDate.year, currentDate.month, currentDate.day)
+                        .. ", timeOfDaySec=" .. tostring(gameTime.timeOfDaySec)
+                        .. ", targetDate=" .. tostring(targetDate and targetDate.year)
+                        .. "-" .. tostring(targetDate and targetDate.month)
+                        .. "-" .. tostring(targetDate and targetDate.day))
+                    log.message("Industry spawn trigger reached: " .. spawn.id)
+                    spawnerState.pendingSpawns[spawn.id] = true
+                    dueSpawns[#dueSpawns + 1] = spawn
+                    break
+            end
+        end
+    end
+
+    state:set(spawnerState)
+    if #dueSpawns == 0 and #roadConnections == 0 and #nativeNameChanges == 0 then
+        return false
+    end
+
+    return {
+        dueSpawns = dueSpawns,
+        roadConnections = roadConnections,
+        nativeNameChanges = nativeNameChanges,
+    }
+end
+
+industrySpawner.postUpdate = function(_userParams, state, _dt, updateResult)
+    if not updateResult then
+        return
+    end
+    local industrySpawns = getIndustrySpawns(state:get() or {})
+
+    for _, nameChange in ipairs(updateResult.nativeNameChanges or {}) do
+        local nameTargetEntity, resultEntityIds =
+            findIndustryNameTarget(nameChange.constructionEntity, nameChange.candidateEntities)
+        local nameComponent = nameTargetEntity
+            and api.engine.getComponent(nameTargetEntity, api.type.ComponentType.NAME)
+        traceIndustrySpawn(nameChange, "name-target-check",
+            "targetEntity=" .. tostring(nameTargetEntity)
+            .. ", nameComponentType=" .. type(nameComponent)
+            .. ", actualName=" .. tostring(nameComponent and nameComponent.name)
+            .. ", attempts=" .. tostring(nameChange.attempts)
+            .. ", resultEntityIds=" .. resultEntityIds)
+        if nameComponent and nameComponent.name ~= nameChange.name then
+            traceIndustrySpawn(nameChange, "name-command-call",
+                "targetEntity=" .. tostring(nameTargetEntity)
+                .. ", name=" .. tostring(nameChange.name))
+            local renameCommand = api.cmd.makeEntitySetNameCmd(nameTargetEntity, nameChange.name, true)
+            api.cmd.sendCommand(renameCommand, function(_, renameSucceeded)
+                traceIndustrySpawn(nameChange, "name-command-callback",
+                    "success=" .. tostring(renameSucceeded))
+                if not renameSucceeded then
+                    log.warning("Native industry spawned but its custom name could not be applied; id = "
+                        .. nameChange.spawnId)
+                end
+            end)
+        elseif nameComponent then
+            traceIndustrySpawn(nameChange, "name-already-applied",
+                "targetEntity=" .. tostring(nameTargetEntity))
+        else
+            nameChange.attempts = nameChange.attempts + 1
+            if nameChange.attempts < 30 then
+                traceIndustrySpawn(nameChange, "name-target-deferred",
+                    "attempts=" .. tostring(nameChange.attempts))
+                queuedNativeNameChanges[#queuedNativeNameChanges + 1] = nameChange
+            else
+                log.warning("Native industry name component was unavailable after "
+                    .. tostring(nameChange.attempts) .. " attempts; id = " .. nameChange.spawnId)
+            end
+        end
+    end
+
+    local noRoadConnectionProblems
+    if #(updateResult.roadConnections or {}) > 0 then
+        noRoadConnectionProblems = getNoRoadConnectionConstructionSet()
+    end
+
+    for _, connection in ipairs(updateResult.roadConnections or {}) do
+        local spawn
+        for _, configuredSpawn in ipairs(industrySpawns) do
+            if configuredSpawn.id == connection.spawnId then
+                spawn = configuredSpawn
+                break
+            end
+        end
+        if spawn and getIndustryPlacementType(spawn.fileName) == "water" then
+            log.message("Skipping road repair for water-placed industry: " .. spawn.id)
+        elseif spawn and not noRoadConnectionProblems then
+            log.warning("Automatic road repair skipped because this runtime cannot check road status; industry may need a manual road connection; id = " .. spawn.id)
+        elseif spawn and noRoadConnectionProblems[connection.constructionEntity] then
+            connectIndustryToNearestTown(connection.constructionEntity, spawn)
+        elseif spawn then
+            log.message("Spawned industry is already road-connected; skipping repair: " .. spawn.id)
+        else
+            log.error("Cannot connect spawned industry because its spawn definition is missing; id = "
+                .. tostring(connection.spawnId))
+        end
+    end
+
+    for _, spawn in ipairs(updateResult.dueSpawns or {}) do
+        local isWaterPlacement = getIndustryPlacementType(spawn.fileName) == "water"
+        traceIndustrySpawn(spawn, "post-update-dispatch",
+            "isWaterPlacement=" .. tostring(isWaterPlacement))
+        spawnIndustry(spawn, function(succeeded, _position, constructionEntity)
+            traceIndustrySpawn(spawn, "completion-queued",
+                "succeeded=" .. tostring(succeeded)
+                .. ", constructionEntity=" .. tostring(constructionEntity))
+            queueSpawnCompletion(spawn.id, succeeded, constructionEntity, isWaterPlacement)
+        end)
+    end
+
+end
+
+industrySpawner.handleEvent = function(_userParams, state, _src, id, name, param)
+    if id ~= "map_scenario_toolkit" then
+        return
+    end
+
+    if name == "developerGrowTown" then
+        local townEntity = param and param.townEntity
+        local passes = param and math.floor(tonumber(param.passes) or 0)
+        if not townEntity or not passes or passes < 1 then
+            log.warning("Developer town growth ignored because its town or pass count is invalid")
+            return
+        end
+        passes = math.min(100, passes)
+        local town = api.engine.getComponent(townEntity, api.type.ComponentType.TOWN)
+        if not town then
+            log.warning("Developer town growth ignored because the town no longer exists; entity = " .. tostring(townEntity))
+            return
+        end
+
+        local submitted = 0
+        for _ = 1, passes do
+            local position = api.engine.util.town.getRandomTownPosition(townEntity, math.random(0, 10000))
+            if position then
+                local command = api.cmd.makeTownDevelopAtCmd(
+                    api.type.Vec2f.new(position.x, position.y),
+                    true,
+                    true
+                )
+                api.cmd.sendCommand(command)
+                submitted = submitted + 1
+            end
+        end
+        log.message("Developer requested " .. submitted .. " town development pass(es) for entity " .. tostring(townEntity))
+        return
+    end
+    if name == "developerImportEvents" then
+        local dataset = param and param.dataset
+        if validateDataset(dataset, "imported JSON") then
+            local spawnerState = state:get() or {}
+            spawnerState.customIndustrySpawns = dataset.industryEvents
+            spawnerState.customSubsidyEvents = dataset.subsidyEvents
+            spawnerState.customTownConsumptionEvents = dataset.townConsumptionEvents or {}
+            state:set(spawnerState)
+            log.message("Loaded " .. #dataset.industryEvents .. " custom industry spawn events, "
+                .. #dataset.subsidyEvents .. " custom subsidy events, and "
+                .. #(dataset.townConsumptionEvents or {}) .. " town consumption rules")
+        end
+        return
+    end
+    if name == "developerCheckIndustryRoadConnections" then
+        log.message("Developer requested spawned-industry road connection check")
+        checkSpawnedIndustryRoadConnections(state:get() or {})
+        return
+    end
+
+    if name == "developerResetMap" then
+        log.message("Developer requested map test reset")
+        resetMapTestChanges(state)
+        return
+    end
+
+    if name ~= "developerTriggerSpawn" then
+        return
+    end
+
+    local spawnId = param and param.spawnId
+    for _, spawn in ipairs(getIndustrySpawns(state:get() or {})) do
+        if spawn.id == spawnId then
+            local spawnerState = state:get() or {}
+            spawnerState.pendingSpawns = spawnerState.pendingSpawns or {}
+            spawnerState.completedSpawns = spawnerState.completedSpawns or {}
+            recoverStalePendingSpawns(spawnerState)
+            if spawnerState.pendingSpawns[spawn.id] or spawnerState.completedSpawns[spawn.id] then
+                log.warning("Developer spawn ignored because it is already pending or complete: " .. spawn.id)
+                return
+            end
+
+            spawnerState.pendingSpawns[spawn.id] = true
+            state:set(spawnerState)
+            log.message("Developer requested industry spawn: " .. spawn.id)
+            local isWaterPlacement = getIndustryPlacementType(spawn.fileName) == "water"
+            spawnIndustry(spawn, function(succeeded, _position, constructionEntity)
+                queueSpawnCompletion(spawn.id, succeeded, constructionEntity, isWaterPlacement)
+            end)
+            return
+        end
+    end
+
+    log.error("Developer requested unknown industry spawn; id = " .. tostring(spawnId))
+end
+
+function data()
+    return industrySpawner
+end
+
+
+
+
+
+
+
+
+
+

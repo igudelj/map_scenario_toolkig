@@ -1,0 +1,179 @@
+{
+    "industryEvents": [
+        {
+            "id": "osijek_demo_farm_1940",
+            "fileName": "::/industries/farm/farm.con",
+            "name": "Osijek Demo Farm",
+            "trigger": {
+                "type": "date",
+                "date": {
+                    "year": 1940,
+                    "month": 10,
+                    "day": 1
+                }
+            },
+            "location": {
+                "townName": "Osijek",
+                "directionWeights": {
+                    "north": 4,
+                    "east": 2,
+                    "south": 1,
+                    "west": 1
+                }
+            },
+            "rotation": "random"
+        },
+        {
+            "id": "osijek_livestock_farm_1940",
+            "fileName": "::/industries/livestock_farm/livestock_farm.con",
+            "name": "Osijek Livestock Farm",
+            "trigger": {
+                "type": "shipment",
+                "sourceIndustryFileName": "::/industries/farm/farm.con",
+                "sourceIndustryName": "Osijek Demo Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumShippedPerYear": 10
+            },
+            "location": {
+                "townName": "Osijek",
+                "directionWeights": {
+                    "north": 1,
+                    "east": 4,
+                    "south": 1,
+                    "west": 2
+                }
+            },
+            "rotation": "random"
+        },
+        {
+            "id": "osijek_tool_factory_after_grain_deliveries",
+            "fileName": "::/industries/tool_factory/tool_factory.con",
+            "name": "Osijek Tool Factory",
+            "trigger": {
+                "type": "shipment",
+                "direction": "delivered",
+                "industryFileName": "::/industries/livestock_farm/livestock_farm.con",
+                "industryName": "Osijek Livestock Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumDeliveredPerYear": 10
+            },
+            "location": {
+                "townName": "Osijek",
+                "directionWeights": {
+                    "north": 2,
+                    "east": 3,
+                    "south": 1,
+                    "west": 1
+                },
+                "distanceWeights": {
+                    "north": 5,
+                    "east": 5,
+                    "south": 1,
+                    "west": 1
+                }
+            },
+            "rotation": "random"
+        }
+    ],
+    "subsidyEvents": [
+        {
+            "id": "osijek_grain_supply_after_farm_spawns",
+            "trigger": {
+                "type": "industrySpawned",
+                "industryEventId": "osijek_demo_farm_1940"
+            },
+            "subsidy": {
+                "type": "deliver_cargo",
+                "target": {
+                    "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                    "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                    "nearIndustryEventId": "osijek_demo_farm_1940",
+                    "selection": "closest"
+                }
+            }
+        },
+        {
+            "id": "osijek_osijek_passenger_subsidy_1940",
+            "trigger": {
+                "type": "date",
+                "date": {
+                    "year": 1940,
+                    "month": 11,
+                    "day": 1
+                }
+            },
+            "subsidy": {
+                "type": "deliver_passengers",
+                "target": {
+                    "sourceTownName": "Osijek",
+                    "targetTownName": "Novi Sad"
+                }
+            }
+        },
+        {
+            "id": "random_livestock_subsidy_after_grain_shipments",
+            "trigger": {
+                "type": "shipment",
+                "sourceIndustryFileName": "::/industries/farm/farm.con",
+                "sourceIndustryName": "Osijek Demo Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumShippedPerYear": 10
+            },
+            "subsidy": {
+                "type": "random",
+                "candidates": [
+                    {
+                        "type": "deliver_cargo",
+                        "target": {
+                            "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                            "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                            "selection": "random"
+                        }
+                    },
+                    {
+                        "type": "deliver_workers",
+                        "target": {
+                            "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                            "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                            "selection": "random"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "id": "livestock_subsidy_after_grain_deliveries",
+            "trigger": {
+                "type": "shipment",
+                "direction": "delivered",
+                "industryFileName": "::/industries/livestock_farm/livestock_farm.con",
+                "industryName": "Osijek Livestock Farm",
+                "cargoTypeFileName": "::/cargos/grain/grain.cargo",
+                "minimumDeliveredPerYear": 10
+            },
+            "subsidy": {
+                "type": "deliver_cargo",
+                "target": {
+                    "constructionFileName": "::/industries/livestock_farm/livestock_farm.con",
+                    "requiredCargoTypeFileName": "::/cargos/grain/grain.cargo",
+                    "selection": "closest"
+                }
+            }
+        }
+    ],
+    "townConsumptionEvents": [
+        {
+            "townName": "Osijek",
+            "consumptionCommercialSlots": [
+                "::/cargos/meat/meat.cargo",
+                "::/cargos/vegetables/vegetables.cargo",
+                "::/cargos/tinned_food/tinned_food.cargo"
+            ],
+            "consumptionIndustrialSlots": [
+                "::/cargos/bricks/bricks.cargo",
+                "::/cargos/planks/planks.cargo",
+                "::/cargos/fuel/fuel.cargo"
+            ]
+        }
+    ]
+}
