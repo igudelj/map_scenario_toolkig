@@ -376,8 +376,9 @@ local function getTownPositions(spawn, placementType)
                 end
                 local validPosition = matchesPlacement
 
+                local nearestRoadDistance
                 if validPosition and not isWaterPlacement then
-                    local nearestRoadDistance = math.huge
+                    nearestRoadDistance = math.huge
                     local nearestRoadHeight
                     for _, roadNode in ipairs(roadNodes) do
                         local xDistance = candidate.x - roadNode.x
@@ -415,6 +416,9 @@ local function getTownPositions(spawn, placementType)
 
                 if validPosition then
                     local direction = getCompassDirection(candidate, referencePosition)
+                    candidate.direction = direction
+                    candidate.distanceFromTown = distanceFromTown
+                    candidate.nearestRoadDistance = nearestRoadDistance
                     local distanceWeight = distanceWeights[direction]
                     local targetDistance = distanceWeight and distanceWeight * distanceWeightStep
                     local candidates = positionsByDirection[direction]
@@ -500,6 +504,86 @@ local function getSpawnRotation(spawn)
         return math.random() * math.pi * 2
     end
     return spawn.rotation or 0
+end
+
+local function traceIndustrySpawn(spawn, stage, details)
+    local spawnId = type(spawn) == "table" and (spawn.id or spawn.spawnId) or spawn
+    log.message("Industry spawn trace: id = " .. tostring(spawnId)
+        .. ", stage = " .. stage
+        .. (details and ", " .. details or ""))
+end
+
+local function describeValueTypes(values)
+    if type(values) ~= "table" then
+        return "type=" .. type(values)
+    end
+    local descriptions = {}
+    for key, value in pairs(values) do
+        descriptions[#descriptions + 1] = tostring(key) .. ":" .. type(value)
+    end
+    table.sort(descriptions)
+    return table.concat(descriptions, ",")
+end
+
+local function findIndustryNameTarget(constructionEntity, resultEntities)
+    local candidates = {}
+    local candidateSet = {}
+    local function addCandidate(entity)
+        if type(entity) == "number" and not candidateSet[entity] then
+            candidateSet[entity] = true
+            candidates[#candidates + 1] = entity
+        end
+    end
+    addCandidate(constructionEntity)
+    if type(resultEntities) == "table" then
+        for _, group in pairs(resultEntities) do
+            if type(group) == "table" then
+                for _, entity in pairs(group) do
+                    addCandidate(entity)
+                end
+            else
+                addCandidate(group)
+            end
+        end
+    end
+
+    local ids = {}
+    for _, entity in ipairs(candidates) do
+        ids[#ids + 1] = tostring(entity)
+    end
+    local resultEntityIds = table.concat(ids, ",")
+    local function hasNameComponent(entity)
+        return api.engine.entityExists(entity)
+            and api.engine.getComponent(entity, api.type.ComponentType.NAME) ~= nil
+    end
+    for _, entity in ipairs(candidates) do
+        if hasNameComponent(entity)
+            and api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY) then
+            return entity, resultEntityIds, candidates
+        end
+    end
+
+    local nameEntity
+    api.engine.forEachEntityWithComponent(function(entity)
+        if nameEntity then
+            return
+        end
+        local industry = api.engine.getComponent(entity, api.type.ComponentType.INDUSTRY)
+        if industry and candidateSet[industry.construction] and hasNameComponent(entity) then
+            nameEntity = entity
+        end
+    end, api.type.ComponentType.INDUSTRY)
+
+    if not nameEntity then
+        for _, entity in ipairs(candidates) do
+            if hasNameComponent(entity) then
+                nameEntity = entity
+                break
+            end
+        end
+    end
+
+    return nameEntity, resultEntityIds, candidates
 end
 
 local function townHasWaterPlacedIndustry(townEntity)
@@ -690,7 +774,13 @@ local function checkSpawnedIndustryRoadConnections(spawnerState)
 end
 
 local function spawnIndustry(spawn, onComplete)
+    traceIndustrySpawn(spawn, "begin",
+        "fileName=" .. tostring(spawn.fileName)
+        .. ", name=" .. tostring(spawn.name)
+        .. ", nameType=" .. type(spawn.name)
+        .. ", town=" .. tostring(spawn.location and spawn.location.townName))
     local constructionId = api.res.constructionRep.find(spawn.fileName)
+    traceIndustrySpawn(spawn, "construction-lookup", "constructionId=" .. tostring(constructionId))
     if constructionId == -1 then
         log.error("Industry construction resource not found; resName = " .. spawn.fileName)
         onComplete(false)
@@ -698,7 +788,14 @@ local function spawnIndustry(spawn, onComplete)
     end
 
     local placementType = getIndustryPlacementType(spawn.fileName)
+    traceIndustrySpawn(spawn, "position-search-call",
+        "placementType=" .. tostring(placementType)
+        .. ", town=" .. tostring(spawn.location and spawn.location.townName)
+        .. ", directionWeightTypes=" .. describeValueTypes(
+            spawn.location and spawn.location.directionWeights))
     local positions = getSpawnPositions(spawn, placementType)
+    traceIndustrySpawn(spawn, "positions-ready",
+        "placementType=" .. tostring(placementType) .. ", candidateCount=" .. tostring(#positions))
     if #positions == 0 then
         log.error("No valid spawn positions found; id = " .. spawn.id)
         onComplete(false)
@@ -712,8 +809,19 @@ local function spawnIndustry(spawn, onComplete)
             return
         end
 
+        traceIndustrySpawn(spawn, "candidate",
+            "attempt=" .. tostring(index) .. "/" .. tostring(#positions)
+            .. ", x=" .. tostring(position.x)
+            .. ", y=" .. tostring(position.y)
+            .. ", direction=" .. tostring(position.direction)
+            .. ", distanceFromTown=" .. tostring(position.distanceFromTown)
+            .. ", nearestRoadDistance=" .. tostring(position.nearestRoadDistance))
+        traceIndustrySpawn(spawn, "vec2-call",
+            "xType=" .. type(position.x) .. ", yType=" .. type(position.y))
         local position2d = api.type.Vec2f.new(position.x, position.y)
+        traceIndustrySpawn(spawn, "vec2-ready", "positionType=" .. type(position2d))
         if not api.engine.terrain.isValidCoordinate(position2d) then
+            traceIndustrySpawn(spawn, "candidate-rejected", "reason=invalid-coordinate")
             tryPosition(index + 1)
             return
         end
@@ -724,6 +832,7 @@ local function spawnIndustry(spawn, onComplete)
             validPlacement = not api.engine.terrain.isOnWater(position2d)
         end
         if not validPlacement then
+            traceIndustrySpawn(spawn, "candidate-rejected", "reason=placement-type")
             tryPosition(index + 1)
             return
         end
@@ -743,15 +852,34 @@ local function spawnIndustry(spawn, onComplete)
             end
 
             local seed = tostring(getConstructionSeed(spawn.id))
+            traceIndustrySpawn(spawn, "map-industry-constructor-call")
             local mapIndustry = api.type.Map.Industry.new()
+            traceIndustrySpawn(spawn, "map-industry-constructor-return",
+                "industryType=" .. type(mapIndustry))
             mapIndustry.onWater = placementType == "water"
             mapIndustry.fileName = spawn.fileName
             mapIndustry.tag = constructionDesc.placementTag
             mapIndustry.pos = position2d
-            mapIndustry.angle = getSpawnRotation(spawn)
+            local rotation = getSpawnRotation(spawn)
+            mapIndustry.angle = rotation
 
+            traceIndustrySpawn(spawn, "create-industries-call",
+                "seedType=" .. type(seed)
+                .. ", mapIndustryType=" .. type(mapIndustry)
+                .. ", onWaterType=" .. type(mapIndustry.onWater)
+                .. ", fileNameType=" .. type(mapIndustry.fileName)
+                .. ", tagType=" .. type(mapIndustry.tag)
+                .. ", posType=" .. type(mapIndustry.pos)
+                .. ", angleType=" .. type(mapIndustry.angle)
+                .. ", fileName=" .. tostring(mapIndustry.fileName)
+                .. ", tag=" .. tostring(mapIndustry.tag)
+                .. ", angle=" .. tostring(mapIndustry.angle))
             local industryResult = api.engine.mapgen.createIndustries(seed, { mapIndustry })
+            traceIndustrySpawn(spawn, "create-industries-return",
+                "resultType=" .. type(industryResult))
             local industryInfo = industryResult and industryResult.toAdd and industryResult.toAdd[1]
+            traceIndustrySpawn(spawn, "industry-info",
+                "resultType=" .. type(industryResult) .. ", infoType=" .. type(industryInfo))
             if not industryInfo then
                 log.warning("Native industry placement produced no industry info; id = " .. spawn.id)
                 if spawn.location then
@@ -762,9 +890,19 @@ local function spawnIndustry(spawn, onComplete)
                 return
             end
 
+            traceIndustrySpawn(spawn, "create-context-call")
             local context = api.type.Context.new()
+            traceIndustrySpawn(spawn, "create-context-return", "contextType=" .. type(context))
+            traceIndustrySpawn(spawn, "create-industry-proposal-call",
+                "seedType=" .. type(seed)
+                .. ", industryInfoType=" .. type(industryInfo)
+                .. ", contextType=" .. type(context))
             local proposal = api.engine.util.proposal.createIndustryProposal(seed, industryInfo, context)
+            traceIndustrySpawn(spawn, "create-industry-proposal-return",
+                "proposalType=" .. type(proposal))
             local proposalItem = proposal and proposal.toAdd and proposal.toAdd[1]
+            traceIndustrySpawn(spawn, "proposal-item",
+                "proposalType=" .. type(proposal) .. ", itemType=" .. type(proposalItem))
             if not proposalItem or not proposalItem.construction then
                 log.warning("Native industry placement produced no construction proposal; id = " .. spawn.id)
                 if spawn.location then
@@ -787,8 +925,97 @@ local function spawnIndustry(spawn, onComplete)
             end
             proposalItem.construction.params = constructionParams
 
-            local command = api.cmd.makeWorldBuildProposalCmd(proposal, context, true, false)
+            traceIndustrySpawn(spawn, "proposal-construction-raw-fields",
+                "fileNameType=" .. type(proposalItem.construction.fileName)
+                .. ", fileName=" .. tostring(proposalItem.construction.fileName)
+                .. ", transfType=" .. type(proposalItem.construction.transf))
+            local collisionProposal = api.type.SimpleProposal.new()
+            local collisionConstruction = api.type.SimpleProposal.ConstructionEntity.new()
+            local cosine = math.cos(rotation)
+            local sine = math.sin(rotation)
+            collisionConstruction.fileName = spawn.fileName
+            collisionConstruction.params = constructionParams
+            collisionConstruction.transf = api.type.Mat4f.new(
+                api.type.Vec4f.new(cosine, sine, 0, 0),
+                api.type.Vec4f.new(-sine, cosine, 0, 0),
+                api.type.Vec4f.new(0, 0, 1, 0),
+                api.type.Vec4f.new(
+                    position.x,
+                    position.y,
+                    api.engine.terrain.getHeightAt(position2d),
+                    1
+                )
+            )
+            collisionProposal.constructionsToAdd[1] = collisionConstruction
+            traceIndustrySpawn(spawn, "collision-proposal-ready",
+                "proposalType=" .. type(collisionProposal)
+                .. ", constructionType=" .. type(collisionConstruction)
+                .. ", fileName=" .. tostring(collisionConstruction.fileName)
+                .. ", transfType=" .. type(collisionConstruction.transf))
+
+            traceIndustrySpawn(spawn, "build-command-call",
+                "proposalType=" .. type(proposal)
+                .. ", contextType=" .. type(context)
+                .. ", constructionParamTypes=" .. describeValueTypes(constructionParams))
+            if placementType == "water" then
+                traceIndustrySpawn(spawn, "collision-check-skipped",
+                    "reason=water-placement; strict-build-validation-remains-enabled")
+            elseif api.engine.util.proposal.makeProposalData then
+                traceIndustrySpawn(spawn, "collision-check-call")
+                local proposalData = api.engine.util.proposal.makeProposalData(collisionProposal, context)
+                local collisionEntities = proposalData
+                    and proposalData.collisionInfo
+                    and proposalData.collisionInfo.collisionEntities or {}
+                traceIndustrySpawn(spawn, "collision-check-result",
+                    "collisionCount=" .. tostring(#collisionEntities))
+                if #collisionEntities > 0 then
+                    for _, collision in ipairs(collisionEntities) do
+                        local collisionEntity = type(collision) == "number" and collision or collision.entity
+                        local collisionFileName
+                        local collisionName
+                        if type(collisionEntity) == "number"
+                            and collisionEntity >= 0
+                            and api.engine.entityExists(collisionEntity) then
+                            local construction = api.engine.getComponent(
+                                collisionEntity,
+                                api.type.ComponentType.CONSTRUCTION
+                            )
+                            local industry = api.engine.getComponent(
+                                collisionEntity,
+                                api.type.ComponentType.INDUSTRY
+                            )
+                            if industry then
+                                construction = api.engine.getComponent(
+                                    industry.construction,
+                                    api.type.ComponentType.CONSTRUCTION
+                                ) or construction
+                                collisionName = api.engine.getComponent(
+                                    industry.construction,
+                                    api.type.ComponentType.NAME
+                                )
+                            end
+                            collisionName = collisionName
+                                or api.engine.getComponent(collisionEntity, api.type.ComponentType.NAME)
+                            collisionFileName = construction and construction.fileName
+                        end
+                        traceIndustrySpawn(spawn, "collision",
+                            "entity=" .. tostring(collisionEntity)
+                            .. ", fileName=" .. tostring(collisionFileName)
+                            .. ", name=" .. tostring(collisionName and collisionName.name))
+                    end
+                    tryPosition(index + 1)
+                    return
+                end
+            else
+                log.warning("Industry proposal collision check unavailable; relying on build validation")
+            end
+
+            local command = api.cmd.makeWorldBuildProposalCmd(proposal, context, false, false)
+            traceIndustrySpawn(spawn, "build-command-ready", "commandType=" .. type(command))
+            traceIndustrySpawn(spawn, "send-build-command")
             api.cmd.sendCommand(command, function(_, success, resultEntities)
+                traceIndustrySpawn(spawn, "build-command-callback",
+                    "success=" .. tostring(success) .. ", resultEntitiesType=" .. type(resultEntities))
                 if not success then
                     log.warning("Native industry build proposal failed; id = " .. spawn.id)
                     if spawn.location then
@@ -800,8 +1027,13 @@ local function spawnIndustry(spawn, onComplete)
                 end
 
                 local constructionEntity = resultEntities and resultEntities[1] and resultEntities[1][1]
+                traceIndustrySpawn(spawn, "build-result",
+                    "constructionEntity=" .. tostring(constructionEntity)
+                    .. ", constructionEntityType=" .. type(constructionEntity))
                 local function finishNativeSpawn()
-                    log.message("Native industry spawn succeeded: " .. spawn.id .. " (" .. tostring(spawn.name) .. ")")
+                    log.message("Native industry spawn succeeded: " .. spawn.id .. " (" .. tostring(spawn.name)
+                        .. "); position = " .. tostring(position.x) .. "," .. tostring(position.y)
+                        .. "; nearestRoadDistance = " .. tostring(position.nearestRoadDistance))
                     if constructionEntity then
                         onComplete(true, position, constructionEntity)
                     else
@@ -811,13 +1043,20 @@ local function spawnIndustry(spawn, onComplete)
                 end
 
                 if constructionEntity and spawn.name and spawn.name ~= "" then
+                    local nameTargetEntity, resultEntityIds, candidateEntities =
+                        findIndustryNameTarget(constructionEntity, resultEntities)
+                    traceIndustrySpawn(spawn, "name-queued",
+                        "constructionEntity=" .. tostring(constructionEntity)
+                        .. ", nameTargetEntity=" .. tostring(nameTargetEntity)
+                        .. ", resultEntityIds=" .. resultEntityIds)
                     queuedNativeNameChanges[#queuedNativeNameChanges + 1] = {
                         constructionEntity = constructionEntity,
-                        name = spawn.name,
+                        candidateEntities = candidateEntities,
                         spawnId = spawn.id,
-                        finish = finishNativeSpawn,
+                        name = spawn.name,
                         attempts = 0,
                     }
+                    finishNativeSpawn()
                 else
                     finishNativeSpawn()
                 end
@@ -829,6 +1068,11 @@ local function spawnIndustry(spawn, onComplete)
 end
 
 local function completeSpawn(spawnerState, spawnId, succeeded, constructionEntity, updateCount, isWaterPlacement)
+    traceIndustrySpawn(spawnId, "completion",
+        "succeeded=" .. tostring(succeeded)
+        .. ", constructionEntity=" .. tostring(constructionEntity)
+        .. ", updateCount=" .. tostring(updateCount)
+        .. ", isWaterPlacement=" .. tostring(isWaterPlacement))
     spawnerState.pendingSpawns = spawnerState.pendingSpawns or {}
     spawnerState.completedSpawns = spawnerState.completedSpawns or {}
     spawnerState.spawnedConstructions = spawnerState.spawnedConstructions or {}
@@ -1155,10 +1399,19 @@ industrySpawner.update = function(_userParams, state, _dt)
                     or spawnerState.updateCount >= spawnerState.retryAfterUpdate[spawn.id])
                 and isDue(spawn, currentDate, gameTime.timeOfDaySec)
                 and hasSpawnTown(spawn) then
-                log.message("Industry spawn trigger reached: " .. spawn.id)
-                spawnerState.pendingSpawns[spawn.id] = true
-                dueSpawns[#dueSpawns + 1] = spawn
-                break
+                    local targetDate = spawn.trigger.date
+                    traceIndustrySpawn(spawn, "trigger-reached",
+                        "triggerType=" .. tostring(spawn.trigger.type)
+                        .. ", currentDate=" .. string.format(
+                            "%04d-%02d-%02d", currentDate.year, currentDate.month, currentDate.day)
+                        .. ", timeOfDaySec=" .. tostring(gameTime.timeOfDaySec)
+                        .. ", targetDate=" .. tostring(targetDate and targetDate.year)
+                        .. "-" .. tostring(targetDate and targetDate.month)
+                        .. "-" .. tostring(targetDate and targetDate.day))
+                    log.message("Industry spawn trigger reached: " .. spawn.id)
+                    spawnerState.pendingSpawns[spawn.id] = true
+                    dueSpawns[#dueSpawns + 1] = spawn
+                    break
             end
         end
     end
@@ -1182,28 +1435,41 @@ industrySpawner.postUpdate = function(_userParams, state, _dt, updateResult)
     local industrySpawns = getIndustrySpawns(state:get() or {})
 
     for _, nameChange in ipairs(updateResult.nativeNameChanges or {}) do
-        local constructionEntity = nameChange.constructionEntity
-        local nameComponent
-        if api.engine.entityExists(constructionEntity) then
-            nameComponent = api.engine.getComponent(constructionEntity, api.type.ComponentType.NAME)
-        end
-
-        if nameComponent then
-            local renameCommand = api.cmd.makeEntitySetNameCmd(constructionEntity, nameChange.name, true)
+        local nameTargetEntity, resultEntityIds =
+            findIndustryNameTarget(nameChange.constructionEntity, nameChange.candidateEntities)
+        local nameComponent = nameTargetEntity
+            and api.engine.getComponent(nameTargetEntity, api.type.ComponentType.NAME)
+        traceIndustrySpawn(nameChange, "name-target-check",
+            "targetEntity=" .. tostring(nameTargetEntity)
+            .. ", nameComponentType=" .. type(nameComponent)
+            .. ", actualName=" .. tostring(nameComponent and nameComponent.name)
+            .. ", attempts=" .. tostring(nameChange.attempts)
+            .. ", resultEntityIds=" .. resultEntityIds)
+        if nameComponent and nameComponent.name ~= nameChange.name then
+            traceIndustrySpawn(nameChange, "name-command-call",
+                "targetEntity=" .. tostring(nameTargetEntity)
+                .. ", name=" .. tostring(nameChange.name))
+            local renameCommand = api.cmd.makeEntitySetNameCmd(nameTargetEntity, nameChange.name, true)
             api.cmd.sendCommand(renameCommand, function(_, renameSucceeded)
+                traceIndustrySpawn(nameChange, "name-command-callback",
+                    "success=" .. tostring(renameSucceeded))
                 if not renameSucceeded then
                     log.warning("Native industry spawned but its custom name could not be applied; id = "
                         .. nameChange.spawnId)
                 end
-                nameChange.finish()
             end)
+        elseif nameComponent then
+            traceIndustrySpawn(nameChange, "name-already-applied",
+                "targetEntity=" .. tostring(nameTargetEntity))
         else
             nameChange.attempts = nameChange.attempts + 1
-            if nameChange.attempts < 5 then
+            if nameChange.attempts < 30 then
+                traceIndustrySpawn(nameChange, "name-target-deferred",
+                    "attempts=" .. tostring(nameChange.attempts))
                 queuedNativeNameChanges[#queuedNativeNameChanges + 1] = nameChange
             else
-                log.warning("Native industry entity was unavailable for naming; id = " .. nameChange.spawnId)
-                nameChange.finish()
+                log.warning("Native industry name component was unavailable after "
+                    .. tostring(nameChange.attempts) .. " attempts; id = " .. nameChange.spawnId)
             end
         end
     end
@@ -1237,7 +1503,12 @@ industrySpawner.postUpdate = function(_userParams, state, _dt, updateResult)
 
     for _, spawn in ipairs(updateResult.dueSpawns or {}) do
         local isWaterPlacement = getIndustryPlacementType(spawn.fileName) == "water"
+        traceIndustrySpawn(spawn, "post-update-dispatch",
+            "isWaterPlacement=" .. tostring(isWaterPlacement))
         spawnIndustry(spawn, function(succeeded, _position, constructionEntity)
+            traceIndustrySpawn(spawn, "completion-queued",
+                "succeeded=" .. tostring(succeeded)
+                .. ", constructionEntity=" .. tostring(constructionEntity))
             queueSpawnCompletion(spawn.id, succeeded, constructionEntity, isWaterPlacement)
         end)
     end
